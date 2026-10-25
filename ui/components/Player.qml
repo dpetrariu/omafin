@@ -32,6 +32,9 @@ Item {
   property real upNextLeft: 0
   property bool showInfo: false
   property real seekAccumulated: 0
+  // Every load and every close counts up; an answer for an older count is
+  // dropped, so a close always wins over a load still on its way.
+  property int generation: 0
   property string flash: ""
 
   readonly property bool active: info !== null || preparing || error !== ""
@@ -67,6 +70,7 @@ Item {
 
   function load(id, start, options) {
     options = options || {}
+    var mine = ++generation
     error = ""
     preparing = true
     started = false
@@ -82,7 +86,7 @@ Item {
     if (bitrate >= 0) params.maxBitrate = bitrate
     if (options.transcode) params.transcode = true
     service.call("play.prepare", params, function(result, err) {
-      if (!root) return
+      if (!root || mine !== root.generation) return
       root.preparing = false
       if (err) {
         root.error = err.message
@@ -140,8 +144,10 @@ Item {
     service.call("play.report", params, function() {})
   }
 
+  // A session that never started may still have a transcode running on
+  // the server; the backend ends it.
   function reportStop() {
-    if (info && started) report("stop")
+    if (info && (started || info.hls)) report("stop")
     started = false
   }
 
@@ -153,6 +159,7 @@ Item {
   }
 
   function close() {
+    generation++
     reportStop()
     player.stop()
     player.source = ""
@@ -307,9 +314,18 @@ Item {
     var params = { id: info.item.id, start: position, audioIndex: audioIndex, subtitleIndex: subtitleIndex }
     reportStop()
     player.pause()
+    var at = position
+    var resume = { audioIndex: audioIndex, subtitleIndex: subtitleIndex }
+    var id = info.item.id
+    var mine = ++generation
     service.call("play.mpv", params, function(r, e) {
-      if (!root) return
-      if (e) { root.toast(e.message, "error"); return }
+      if (!root || mine !== root.generation) return
+      if (e) {
+        // Carry on here, with a session of its own again.
+        root.toast(e.message, "error")
+        root.load(id, at, resume)
+        return
+      }
       root.toast("Playing in mpv", "info")
       root.close()
     })

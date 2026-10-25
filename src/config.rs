@@ -117,7 +117,7 @@ impl PlaybackSettings {
 
 impl Settings {
     pub fn load(paths: &Paths) -> Self {
-        let settings = match std::fs::read(paths.config_file()) {
+        match std::fs::read(paths.config_file()) {
             Ok(bytes) => serde_json::from_slice::<Settings>(&bytes)
                 .map(Settings::normalized)
                 .unwrap_or_else(|err| {
@@ -125,8 +125,7 @@ impl Settings {
                     Settings::default().normalized()
                 }),
             Err(_) => Settings::default().normalized(),
-        };
-        settings
+        }
     }
 
     pub fn save(&self, paths: &Paths) -> Result<()> {

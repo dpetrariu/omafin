@@ -43,6 +43,7 @@ Item {
   }
 
   function close() {
+    playRequest++
     closingFromHost = true
     opened = false
     if (service) service.windowOpen = false
@@ -230,6 +231,7 @@ Item {
 
   // Escape: leave the innermost thing first.
   function goBack() {
+    playRequest++
     if (menu.visible) { menu.close(); return }
     if (anyDialogOpen()) { closeDialogs(); return }
     if (helpOpen) { helpOpen = false; return }
@@ -366,10 +368,16 @@ Item {
     openItem(item)
   }
 
+  // Counts each play asked for; a show's next episode arrives later, and is
+  // dropped if something newer was asked for, or the window was closed.
+  property int playRequest: 0
+
   function playItem(item, options) {
     if (!item) return
     options = options || {}
+    var mine = ++playRequest
     resolvePlayable(item, function(target) {
+      if (mine !== root.playRequest || !root.opened) return
       if (String(root.service.playbackPrefs.player) === "mpv" && root.service.mpvAvailable) {
         root.playInMpv(target, options)
         return

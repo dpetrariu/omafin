@@ -129,6 +129,16 @@ class RpcError(Exception):
         self.message = error.get("message", "")
 
 
+def raw_status(base, path):
+    """The status for a request line urllib would refuse to send."""
+    rest = base.split("://", 1)[1]
+    hostport, token = rest.split("/", 1)
+    host, port = hostport.split(":")
+    with socket.create_connection((host, int(port)), timeout=10) as s:
+        s.sendall(("GET /" + token + path + " HTTP/1.1\r\nHost: x\r\n\r\n").encode())
+        return int(s.recv(64).split(b" ")[1])
+
+
 def fetch(base, path, headers=None):
     req = urllib.request.Request(base + path, headers=headers or {})
     try:
@@ -287,6 +297,9 @@ def main():
         print("ok: transcodes, playlists without the token, subtitles")
 
         # The proxy only reaches videos, images and nothing else.
+        # Raw bytes a URL parser would drop, sent as they are.
+        for bad in ["/jf/Videos/" + BLADE + "/.\t./.\t./Users/Me", "/jf/Videos/" + BLADE + "/.\t./.\t./_state?x=\t"]:
+            assert raw_status(base, bad) == 404, repr(bad)
         for bad in ["/jf/Users/" + BLADE + "/x", "/jf/Videos/" + BLADE + "/../../System/Info", "/jf/Videos/" + BLADE + "/%2e%2e/x",
                     "/jf/Videos/nope/stream", "/img/" + BLADE + "/Primary", "/img/" + BLADE + "/Primary?tag=../x"]:
             assert fetch(base, bad)[0] == 404, bad
@@ -344,6 +357,30 @@ def main():
         assert any(r["event"] == "Pause" for r in mine)
         wait_for("the playback event", lambda: any(e.get("method") == "playback.changed" and e["params"]["state"] == "stopped" for e in b.events) or b.call("play.status") is None, 5)
         print("ok: mpv handoff and its reports")
+
+        # An mpv still playing when the window starts something else is
+        # stopped, and stopping never waits on it.
+        b.stop()
+        b = Backend(binary, home, {"PATH": os.path.join(HERE, "fakebin") + os.pathsep + os.environ["PATH"], "FAKE_MPV_LOG": mpv_log, "FAKE_MPV_STEPS": "400"})
+        long_one = b.call("play.mpv", {"id": BLADE})
+        wait_for("mpv starts", lambda: any(r["kind"] == "start" and r["session"] == long_one["session"] for r in state(port)["reports"]), 10)
+        b.call("play.prepare", {"id": ARRIVAL})
+        t = time.time()
+        b.call("play.stop")
+        assert time.time() - t < 3, "play.stop waited on mpv"
+        wait_for("the replaced mpv is reported stopped", lambda: [r["kind"] for r in state(port)["reports"] if r["session"] == long_one["session"]][-1] == "stop", 10)
+        second = b.call("play.mpv", {"id": BLADE})
+        third = b.call("play.mpv", {"id": ARRIVAL})
+        wait_for("the second mpv is ended by the third", lambda: any(r["kind"] == "stop" and r["session"] == second["session"] for r in state(port)["reports"]), 10)
+        wait_for("the third mpv starts", lambda: any(r["kind"] == "start" and r["session"] == third["session"] for r in state(port)["reports"]), 10)
+        t = time.time()
+        b.call("auth.signOut")
+        assert time.time() - t < 5, "sign-out waited on mpv"
+        wait_for("the third is ended by sign-out", lambda: any(r["kind"] == "stop" and r["session"] == third["session"] for r in state(port)["reports"]), 10)
+        done = b.call("auth.quickConnectStart", {"url": url})["code"]
+        approve(port, done)
+        assert b.call("auth.quickConnectPoll")["state"] == "signedIn"
+        print("ok: mpv is replaced and stopped without waiting")
 
         # Settings: only known keys, validated.
         b.refused("settings.update", {"patch": {"userId": "x"}}, "unknown setting")

@@ -150,6 +150,7 @@ Item {
       icon: "sort"
       label: "Sort"
       value: root.labelOf(root.sorts, root.sort) + (root.sort === "random" ? "" : root.descending ? " ↓" : " ↑")
+      clearable: root.sort !== "name" || root.descending
       anchors.verticalCenter: parent.verticalCenter
       onChoose: root.showMenu(root.sorts.map(function(s) {
         return { id: s.id, label: s.label, icon: s.id === root.sort ? "check" : "" }

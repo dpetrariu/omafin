@@ -144,7 +144,7 @@ Item {
   readonly property var rows: {
     var out = []
     if (episodes.length > 0 && (isSeries || isEpisode)) {
-      out.push({ key: "episodes", title: isEpisode ? "More from " + (currentSeason ? currentSeason.name : "this season") : (currentSeason ? currentSeason.name : "Episodes"),
+      out.push({ key: "episodes:" + seasonId, title: isEpisode ? "More from " + (currentSeason ? currentSeason.name : "this season") : (currentSeason ? currentSeason.name : "Episodes"),
         items: episodes, shape: "landscape", episodeTitles: true, startIndex: isEpisode ? Math.max(0, episodes.map(function(e) { return e.id }).indexOf(shown.id)) : nextUpIndex })
     }
     if (seasons.length > 1) out.push({ key: "seasons", title: "Seasons", items: seasons, shape: "poster", cardWidth: theme.space(120) })
@@ -169,6 +169,7 @@ Item {
     if (row && row.key === "seasons") {
       selectSeason(card)
       page.rowIndex = 0
+      page.moved = true
       return
     }
     if (row && row.key === "people") {

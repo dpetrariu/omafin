@@ -31,9 +31,14 @@ for opt in (loaded[4] if len(loaded) > 4 else "").split(","):
         start = float(opt[6:])
 send({"event": "file-loaded"})
 send({"event": "playback-restart"})
-for i in range(4):
-    send({"event": "property-change", "id": 1, "name": "time-pos", "data": start + i * 4})
+steps = int(os.environ.get("FAKE_MPV_STEPS", "4"))
+for i in range(steps):
+    try:
+        send({"event": "property-change", "id": 1, "name": "time-pos", "data": start + i * 4})
+    except (BrokenPipeError, ConnectionResetError):
+        sys.exit(0)
     time.sleep(0.3)
+send({"event": "property-change", "id": 3, "name": "aid", "data": 1})
 send({"event": "property-change", "id": 2, "name": "pause", "data": True})
 time.sleep(0.3)
 send({"event": "end-file", "reason": "quit"})

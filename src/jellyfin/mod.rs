@@ -194,10 +194,16 @@ impl Jellyfin {
     /// A raw response for media, keeping the server's headers. `extra` carries
     /// Range through unchanged.
     pub async fn raw(&self, path: &str, extra: &[(&str, String)]) -> Result<reqwest::Response> {
+        self.raw_with(Method::GET, path, extra).await
+    }
+
+    /// The same, as a HEAD when the player only asks about a stream: a GET
+    /// of a playlist would start a transcode on the server.
+    pub async fn raw_with(&self, method: Method, path: &str, extra: &[(&str, String)]) -> Result<reqwest::Response> {
         let (base, token) = self.base().await?;
         let mut request = self
             .http
-            .get(format!("{base}{path}"))
+            .request(method, format!("{base}{path}"))
             .header("Authorization", self.authorization(Some(&token)));
         for (name, value) in extra {
             request = request.header(*name, value);
@@ -299,7 +305,12 @@ pub fn network_error(err: &reqwest::Error) -> Error {
     } else if err.is_connect() {
         Error::new(error::NETWORK, "Could not reach the Jellyfin server")
     } else {
-        Error::new(error::NETWORK, format!("Network problem: {err}"))
+        // Without the URL: a query can hold a secret (Quick Connect's).
+        let mut text = err.to_string();
+        if let Some(url) = err.url() {
+            text = text.replace(&format!(" for url ({url})"), "").replace(url.as_str(), "the server");
+        }
+        Error::new(error::NETWORK, format!("Network problem: {text}"))
     }
 }
 

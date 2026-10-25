@@ -177,7 +177,8 @@ impl Media {
         if let Some(range) = range.filter(|r| r.len() < 200 && r.starts_with("bytes=")) {
             extra.push(("Range", range));
         }
-        let response = match self.jellyfin.raw(upstream, &extra).await {
+        let method = if head_only { reqwest::Method::HEAD } else { reqwest::Method::GET };
+        let response = match self.jellyfin.raw_with(method, upstream, &extra).await {
             Ok(response) => response,
             Err(_) => return respond_status(stream, 502, "Upstream").await,
         };
@@ -354,15 +355,22 @@ fn parse_target(target: &str, token: &str) -> Option<Route> {
                 return None;
             }
             let tail: Vec<&str> = segments.collect();
-            if tail.is_empty()
-                || tail.iter().any(|s| s.is_empty() || *s == "." || *s == ".." || s.contains('%') || s.contains('\\'))
-            {
+            // Only plain names pass: a URL parser later drops tabs and
+            // newlines and resolves dots, so anything else could climb out
+            // of this video's folder.
+            let plain = |s: &&str| !s.is_empty() && !s.starts_with('.') && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b));
+            if tail.is_empty() || !tail.iter().all(plain) {
                 return None;
             }
-            if !query.chars().all(|c| c.is_ascii_graphic()) {
+            if !query.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-~,=&%:".contains(&b)) {
                 return None;
             }
             let clean = crate::playback::strip_token(&format!("/{root}/{id}/{}?{query}", tail.join("/")));
+            // And check what a URL parser makes of it, in case it disagrees.
+            let parsed = url::Url::parse(&format!("http://h{clean}")).ok()?;
+            if !parsed.path().starts_with(&format!("/{root}/{id}/")) || parsed.path().contains("/..") {
+                return None;
+            }
             let cache = tail.first() == Some(&"Trickplay") && tail.last().map(|t| t.ends_with(".jpg")).unwrap_or(false);
             Some(Route::Server { path: clean, cache })
         }
@@ -370,12 +378,15 @@ fn parse_target(target: &str, token: &str) -> Option<Route> {
     }
 }
 
-/// Take the token out of every URI line of an HLS playlist.
+/// Take the token out of every URI of an HLS playlist: the segment lines
+/// and the `URI="…"` attributes of tags (subtitles, maps, keys).
 fn clean_playlist(text: &str) -> String {
     text.lines()
         .map(|line| {
-            if line.starts_with('#') || line.trim().is_empty() {
+            if line.trim().is_empty() {
                 line.to_string()
+            } else if line.starts_with('#') {
+                clean_uri_attributes(line)
             } else {
                 crate::playback::strip_token(line.trim())
             }
@@ -383,6 +394,27 @@ fn clean_playlist(text: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n")
         + "\n"
+}
+
+fn clean_uri_attributes(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(at) = rest.find("URI=\"") {
+        let (before, after) = rest.split_at(at + 5);
+        out.push_str(before);
+        match after.find('"') {
+            Some(end) => {
+                out.push_str(&crate::playback::strip_token(&after[..end]));
+                rest = &after[end..];
+            }
+            None => {
+                rest = after;
+                break;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn sha1_bytes(data: &[u8]) -> Vec<u8> {
@@ -463,12 +495,19 @@ mod tests {
         assert_eq!(parse_target(&format!("/{TOKEN}/jf/Videos/{ID}/%2e%2e/x"), TOKEN), None);
         assert_eq!(parse_target(&format!("/{TOKEN}/jf/Users/{ID}/x"), TOKEN), None);
         assert_eq!(parse_target(&format!("/{TOKEN}/jf/Videos/{ID}"), TOKEN), None);
+        // A URL parser drops tabs and newlines, which would turn these into "..".
+        assert_eq!(parse_target(&format!("/{TOKEN}/jf/Videos/{ID}/.\t./.\t./Users/Me"), TOKEN), None);
+        assert_eq!(parse_target(&format!("/{TOKEN}/jf/Videos/{ID}/.\n./x"), TOKEN), None);
+        assert_eq!(parse_target(&format!("/{TOKEN}/jf/Videos/{ID}/stream?a=\t"), TOKEN), None);
+        assert_eq!(parse_target(&format!("/{TOKEN}/jf/Videos/{ID}/.hidden"), TOKEN), None);
     }
 
     #[test]
     fn playlists_lose_the_token() {
         let text = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nmain.m3u8?DeviceId=a&ApiKey=secret\n";
         assert_eq!(clean_playlist(text), "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nmain.m3u8?DeviceId=a\n");
+        let tag = "#EXT-X-MEDIA:TYPE=SUBTITLES,NAME=\"English\",URI=\"subs.m3u8?a=1&api_key=secret\",LANGUAGE=\"eng\"\n";
+        assert_eq!(clean_playlist(tag), "#EXT-X-MEDIA:TYPE=SUBTITLES,NAME=\"English\",URI=\"subs.m3u8?a=1\",LANGUAGE=\"eng\"\n");
     }
 
     #[test]

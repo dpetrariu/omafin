@@ -137,7 +137,24 @@ def main():
         wait_for("a favourite", lambda: ARRIVAL in state(port)["favorites"], 5)
         h.key("favorite", 1.0)
         wait_for("not a favourite", lambda: ARRIVAL not in state(port)["favorites"], 5)
-        print("ok: watched and favourite from the keyboard, with Undo")
+        target = h.value("app.view().currentTarget()")
+        assert target and target["id"] == ARRIVAL, "the cursor left the marked card"
+        # On a longer row too: the cursor stays on the card that was marked.
+        h.nav("down")
+        h.nav("down")
+        h.nav("right")
+        h.nav("right")
+        marked = h.value("app.view().currentTarget().id")
+        h.key("favorite", 1.0)
+        wait_for("that one is a favourite", lambda: marked in state(port)["favorites"], 5)
+        assert h.value("app.view().currentTarget().id") == marked
+        h.key("favorite", 1.0)
+        wait_for("and not again", lambda: marked not in state(port)["favorites"], 5)
+        assert h.value("app.view().currentTarget().id") == marked
+        h.nav("first")
+        h.nav("up")
+        h.nav("up")
+        print("ok: watched and favourite from the keyboard, with Undo, cursor kept")
 
         # The menu on a card offers the actions, by name.
         h.key("menu", 0.6)
@@ -151,7 +168,7 @@ def main():
         h.js(f"app.openItem({{ id: '{HOMELAND}', type: 'Series', name: 'Homeland' }})")
         wait_for("the show page", lambda: h.value("app.view().episodes.length") == 3, 10)
         assert h.value("app.view().playTarget.id") == S1E2
-        assert h.value("app.view().rows.map(function(r) { return r.key })") == ["episodes", "seasons", "people", "similar"]
+        assert h.value("app.view().rows.map(function(r) { return r.key.split(':')[0] })") == ["episodes", "seasons", "people", "similar"]
         time.sleep(1.2)
         h.shot("06-show")
         # Season 2 from the seasons row.
@@ -181,6 +198,14 @@ def main():
         wait_for("search results", lambda: h.value("app.view().result ? app.view().result.movies.length : 0") == 1, 10)
         h.shot("08-search")
         print("ok: search")
+
+        # Closing while a play is still being prepared: nothing plays, nothing is reported.
+        casablanca = "a0000000000000000000000000000066"
+        h.js(f"(app.playItem({{ id: '{casablanca}', type: 'Movie', mediaType: 'Video', name: 'Casablanca', user: {{}} }}, {{}}), hooks.player.close())")
+        time.sleep(3)
+        assert h.value("hooks.player.active") is False
+        assert not reports(port, casablanca), reports(port, casablanca)
+        print("ok: a close beats a play still loading")
 
         # Playing in the window: start, pause and stop reach the server.
         h.js(f"app.playItem({{ id: '{BLADE}', type: 'Movie', mediaType: 'Video', name: 'Blade Runner', user: {{}} }}, {{}})")

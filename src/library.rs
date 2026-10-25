@@ -370,7 +370,7 @@ pub async fn items_list(app: &App, params: &Value) -> Result<Value> {
     let genres: Vec<String> = params
         .get("genres")
         .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|g| g.as_str()).filter(|g| !g.is_empty() && g.len() < 120).map(|g| q(g)).collect())
+        .map(|a| a.iter().filter_map(|g| g.as_str()).filter(|g| !g.is_empty() && g.len() < 120).map(q).collect())
         .unwrap_or_default();
     if !genres.is_empty() {
         // Jellyfin separates genres with a pipe, because names may hold commas.

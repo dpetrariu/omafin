@@ -24,5 +24,10 @@ install -m 644 "$project_dir/setup/omafin.desktop" "$apps/omafin.desktop"
 
 update-desktop-database "$apps" 2>/dev/null || true
 omarchy-shell shell rescanPlugins
+# The rescan finishes in the background; wait until the shell knows the plugin.
+for _ in $(seq 1 20); do
+  omarchy plugin list 2>/dev/null | grep -q '^omafin ' && break
+  sleep 0.5
+done
 omarchy plugin enable omafin
 echo "Omafin is linked at $install_path. Click the film icon in the bar."

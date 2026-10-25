@@ -40,8 +40,11 @@ pub struct Session {
 #[derive(Default)]
 pub struct Playback {
     current: Mutex<Option<Session>>,
-    /// The mpv process this module started, so a second play replaces it.
-    mpv: Mutex<Option<tokio::process::Child>>,
+    /// The mpv this module started: the session it plays and a way to end
+    /// it. The process itself belongs to the task that drives it.
+    mpv: std::sync::Mutex<Option<(String, tokio::sync::oneshot::Sender<()>)>>,
+    /// Reports go out one at a time, so a Progress never lands after its Stopped.
+    reporting: Mutex<()>,
 }
 
 impl Playback {
@@ -134,6 +137,7 @@ pub async fn prepare(app: &App, params: &Value, player: Player) -> Result<Value>
         .ok_or_else(|| Error::invalid("That video has no playable file"))?;
     let source = library::media_source(&source_info);
     let source_id = source["id"].as_str().unwrap_or(&id).to_string();
+    require_id(&source_id).map_err(|_| Error::new(crate::error::SERVER, "Jellyfin named the file oddly; Omafin will not play it"))?;
     let streams: Vec<Value> = source["streams"].as_array().cloned().unwrap_or_default();
 
     let settings = app.settings();
@@ -193,6 +197,9 @@ pub async fn prepare(app: &App, params: &Value, player: Player) -> Result<Value>
         }));
     }
     let session_id = info.get("PlaySessionId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if session_id.len() > 64 || !session_id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(Error::new(crate::error::SERVER, "Jellyfin sent an odd play session"));
+    }
     let answered = info
         .get("MediaSources")
         .and_then(|v| v.as_array())
@@ -258,12 +265,14 @@ pub async fn prepare(app: &App, params: &Value, player: Player) -> Result<Value>
         player,
         last_report: None,
     };
-    // A new session ends the old one, so the server stops any transcode.
+    // A new session ends the old one, so the server stops any transcode,
+    // and a window play ends an mpv one.
     let previous = app.playback.current.lock().await.replace(session);
     if let Some(previous) = previous {
-        if previous.started {
-            let _ = report_stopped(app, &previous).await;
-        }
+        end_session(app, &previous).await;
+    }
+    if player == Player::Window {
+        stop_mpv(app);
     }
 
     Ok(json!({
@@ -365,7 +374,22 @@ fn report_body(session: &Session) -> Value {
 }
 
 async fn report_stopped(app: &App, session: &Session) -> Result<Value> {
+    let _order = app.playback.reporting.lock().await;
     app.jellyfin.post("/Sessions/Playing/Stopped", report_body(session)).await
+}
+
+/// Tell the server a session is over: one that played, and one that never
+/// started but may have set a transcode going.
+async fn end_session(app: &App, session: &Session) {
+    if session.started || session.method != "DirectPlay" {
+        let _ = report_stopped(app, session).await;
+    }
+}
+
+fn stop_mpv(app: &App) {
+    if let Some((_, stop)) = app.playback.mpv.lock().unwrap().take() {
+        let _ = stop.send(());
+    }
 }
 
 /// Where the window's player is. `event` is start, progress, pause, resume,
@@ -374,6 +398,7 @@ pub async fn report(app: &App, params: &Value) -> Result<Value> {
     let session_id = str_param(params, "session");
     let event = str_param(params, "event");
     let position = params.get("position").and_then(|v| v.as_f64()).unwrap_or(0.0).max(0.0);
+    let _order = app.playback.reporting.lock().await;
     let snapshot = {
         let mut guard = app.playback.current.lock().await;
         let Some(session) = guard.as_mut().filter(|s| s.id == session_id && s.player == Player::Window) else {
@@ -395,6 +420,17 @@ pub async fn report(app: &App, params: &Value) -> Result<Value> {
         }
         let due = session.last_report.map(|t| t.elapsed() >= REPORT_EVERY).unwrap_or(true);
         if event == "progress" && !due {
+            return Ok(json!({ "reported": false }));
+        }
+        if event == "stop" && !session.started {
+            // Never played, but a transcode may be running: end it.
+            let snapshot = session.clone();
+            *guard = None;
+            drop(guard);
+            if snapshot.method != "DirectPlay" {
+                app.jellyfin.post("/Sessions/Playing/Stopped", report_body(&snapshot)).await?;
+                return Ok(json!({ "reported": true }));
+            }
             return Ok(json!({ "reported": false }));
         }
         if event != "start" && !session.started {
@@ -439,6 +475,9 @@ pub async fn play_in_mpv(app: &Arc<App>, params: &Value) -> Result<Value> {
         return Err(Error::invalid("mpv is not installed (sudo pacman -S mpv)"));
     }
     let mut prepared = prepare(app, params, Player::Mpv).await?;
+    // Replace an mpv that is still playing something else; its own task
+    // reports and cleans up after it.
+    stop_mpv(app);
     let base = app.media.base_url();
     let url = format!("{base}{}", prepared["url"].as_str().unwrap_or_default());
     let streams: Vec<Value> = prepared["audio"].as_array().cloned().unwrap_or_default()
@@ -455,20 +494,21 @@ pub async fn play_in_mpv(app: &Arc<App>, params: &Value) -> Result<Value> {
     match prepared["subtitleIndex"].as_i64() {
         None => options.push("sid=no".into()),
         Some(i) => {
-            if external_sub.is_none() {
-                if let Some(ordinal) = track_ordinal(&streams, "Subtitle", i) {
-                    options.push(format!("sid={ordinal}"));
-                }
+            if let Some(ordinal) = track_ordinal(&streams, "Subtitle", i).filter(|_| external_sub.is_none()) {
+                options.push(format!("sid={ordinal}"));
             }
         }
     }
+    // mpv numbers tracks in file order; reports need Jellyfin's numbers.
+    let embedded = |kind: &str| -> Vec<i64> {
+        streams.iter().filter(|s| s["type"] == kind && s["isExternal"] != true).filter_map(|s| s["index"].as_i64()).collect()
+    };
+    let audio_map = embedded("Audio");
+    let mut subtitle_map = embedded("Subtitle");
     let title = mpv_title(&prepared["item"]);
-    let socket = mpv_socket(app)?;
+    let session = prepared["session"].as_str().unwrap_or_default().to_string();
+    let socket = mpv_socket(app, &session)?;
     let _ = std::fs::remove_file(&socket);
-    // Replace an mpv that is still playing something else.
-    if let Some(mut old) = app.playback.mpv.lock().await.take() {
-        let _ = old.kill().await;
-    }
     let child = tokio::process::Command::new("mpv")
         .arg("--idle=once")
         .arg("--force-window=immediate")
@@ -482,8 +522,8 @@ pub async fn play_in_mpv(app: &Arc<App>, params: &Value) -> Result<Value> {
         .kill_on_drop(true)
         .spawn()
         .map_err(|e| Error::internal(format!("Could not start mpv: {e}")))?;
-    *app.playback.mpv.lock().await = Some(child);
-    let session = prepared["session"].as_str().unwrap_or_default().to_string();
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
+    *app.playback.mpv.lock().unwrap() = Some((session.clone(), stop_tx));
     let sub_url = external_sub.and_then(|s| {
         let index = s["index"].as_i64()?;
         let item = prepared["item"]["id"].as_str()?.to_string();
@@ -493,14 +533,14 @@ pub async fn play_in_mpv(app: &Arc<App>, params: &Value) -> Result<Value> {
             Some("ssa") => "ssa",
             _ => "srt",
         };
+        subtitle_map.push(index);
         Some(format!("{base}/jf/Videos/{item}/{source}/Subtitles/{index}/0/Stream.{format}"))
     });
     let app = app.clone();
+    let tracks = Tracks { audio: audio_map, subtitle: subtitle_map };
+    let job = MpvJob { socket, url, options: options.join(","), sub_url, session, tracks };
     tokio::spawn(async move {
-        if let Err(err) = drive_mpv(&app, &socket, &url, &options.join(","), sub_url, &session).await {
-            eprintln!("omafin: mpv: {err}");
-        }
-        let _ = std::fs::remove_file(&socket);
+        drive_mpv(app, child, job, stop_rx).await;
     });
     prepared["url"] = Value::Null;
     Ok(prepared)
@@ -516,12 +556,15 @@ fn mpv_title(item: &Value) -> String {
     title.chars().filter(|c| !c.is_control()).take(200).collect()
 }
 
-fn mpv_socket(app: &App) -> Result<PathBuf> {
+/// One socket per play, so an mpv that is closing never takes the next
+/// one's. Short, since a Unix socket path holds at most 107 bytes.
+fn mpv_socket(app: &App, session: &str) -> Result<PathBuf> {
     let dir = app.paths.runtime_dir();
     std::fs::create_dir_all(&dir)?;
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
-    Ok(dir.join("mpv.sock"))
+    let name: String = session.chars().take(12).collect();
+    Ok(dir.join(format!("mpv-{name}.sock")))
 }
 
 /// An mpv option value in a `loadfile` options list: commas and quotes are
@@ -530,60 +573,126 @@ fn option_safe(value: &str) -> bool {
     !value.contains(',') && !value.contains('"') && !value.contains('\n')
 }
 
-async fn drive_mpv(app: &Arc<App>, socket: &PathBuf, url: &str, options: &str, sub_url: Option<String>, session_id: &str) -> Result<()> {
+/// Jellyfin's stream numbers for mpv's track numbers (1-based).
+struct Tracks {
+    audio: Vec<i64>,
+    subtitle: Vec<i64>,
+}
+
+impl Tracks {
+    fn jellyfin(list: &[i64], mpv: &Value) -> Option<i64> {
+        let n = mpv.as_u64()? as usize;
+        n.checked_sub(1).and_then(|i| list.get(i)).copied()
+    }
+}
+
+struct MpvJob {
+    socket: PathBuf,
+    url: String,
+    options: String,
+    sub_url: Option<String>,
+    session: String,
+    tracks: Tracks,
+}
+
+/// Run one mpv to its end, reporting for it. Whatever ends it (the person
+/// closing mpv, the end of the file, a new play, sign-out), this task stops
+/// the process, removes its socket and tells the server and the window.
+async fn drive_mpv(app: Arc<App>, mut child: tokio::process::Child, job: MpvJob, stop: tokio::sync::oneshot::Receiver<()>) {
+    let ended_at_end = match talk_to_mpv(&app, &mut child, &job, stop).await {
+        Ok(ended) => ended,
+        Err(err) => {
+            eprintln!("omafin: mpv: {err}");
+            false
+        }
+    };
+    let _ = child.start_kill();
+    let _ = child.wait().await;
+    let _ = std::fs::remove_file(&job.socket);
+    {
+        let mut slot = app.playback.mpv.lock().unwrap();
+        if slot.as_ref().map(|(s, _)| s == &job.session).unwrap_or(false) {
+            *slot = None;
+        }
+    }
+    let finished = {
+        let mut guard = app.playback.current.lock().await;
+        if guard.as_ref().map(|s| s.id == job.session).unwrap_or(false) { guard.take() } else { None }
+    };
+    let mut position = None;
+    let mut item = Value::Null;
+    if let Some(s) = finished {
+        position = Some(s.position);
+        item = json!(s.item_id);
+        end_session(&app, &s).await;
+    }
+    // Always said, so the bar never keeps showing "Playing in mpv".
+    app.notifier.notify(
+        "playback.changed",
+        json!({ "itemId": item, "state": "stopped", "player": "mpv", "position": position, "ended": ended_at_end }),
+    );
+}
+
+/// The conversation with mpv. Returns whether the file played to its end.
+async fn talk_to_mpv(app: &Arc<App>, child: &mut tokio::process::Child, job: &MpvJob, mut stop: tokio::sync::oneshot::Receiver<()>) -> Result<bool> {
     let mut stream = None;
     for _ in 0..100 {
-        if let Ok(s) = tokio::net::UnixStream::connect(socket).await {
+        if let Ok(s) = tokio::net::UnixStream::connect(&job.socket).await {
             stream = Some(s);
             break;
+        }
+        if let Ok(Some(_)) = child.try_wait() {
+            return Err(Error::internal("mpv quit before it opened its control socket"));
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     let stream = stream.ok_or_else(|| Error::internal("mpv did not open its control socket"))?;
     let (read, mut write) = stream.into_split();
-    let mut commands = vec![
+    for c in [
         json!({ "command": ["observe_property", 1, "time-pos"] }),
         json!({ "command": ["observe_property", 2, "pause"] }),
         json!({ "command": ["observe_property", 3, "aid"] }),
         json!({ "command": ["observe_property", 4, "sid"] }),
-        json!({ "command": ["loadfile", url, "replace", -1, options] }),
-    ];
-    if let Some(sub) = sub_url.filter(|s| option_safe(s)) {
-        // After the file has loaded, so the track joins it.
-        commands.push(json!({ "command": ["sub-add", sub, "select"], "async": true, "request_id": 9 }));
-    }
-    let (first, rest) = commands.split_at(5);
-    for c in first {
+        json!({ "command": ["loadfile", job.url, "replace", -1, job.options] }),
+    ] {
         write.write_all(format!("{c}\n").as_bytes()).await?;
     }
-    let mut pending_sub: Vec<Value> = rest.to_vec();
+    let mut pending_sub = job.sub_url.clone().filter(|s| option_safe(s));
     let mut lines = BufReader::new(read).lines();
     let mut ended_at_end = false;
     loop {
-        let line = match lines.next_line().await {
-            Ok(Some(line)) => line,
-            _ => break,
+        let line = tokio::select! {
+            line = lines.next_line() => match line {
+                Ok(Some(line)) => line,
+                _ => break,
+            },
+            _ = &mut stop => break,
         };
         let Ok(event) = serde_json::from_str::<Value>(&line) else { continue };
         match event["event"].as_str() {
             Some("file-loaded") => {
-                for c in pending_sub.drain(..) {
+                // After the file has loaded, so the track joins it.
+                if let Some(sub) = pending_sub.take() {
+                    let c = json!({ "command": ["sub-add", sub, "select"], "async": true, "request_id": 9 });
                     write.write_all(format!("{c}\n").as_bytes()).await?;
                 }
             }
             Some("playback-restart") => {
                 let start = {
                     let mut guard = app.playback.current.lock().await;
-                    match guard.as_mut().filter(|s| s.id == session_id) {
-                        Some(s) if !s.started => {
+                    match guard.as_mut() {
+                        Some(s) if s.id == job.session && !s.started => {
                             s.started = true;
                             s.last_report = Some(Instant::now());
                             Some(s.clone())
                         }
-                        _ => None,
+                        Some(s) if s.id == job.session => None,
+                        // Something else plays now; this mpv is done.
+                        _ => break,
                     }
                 };
                 if let Some(s) = start {
+                    let _order = app.playback.reporting.lock().await;
                     let _ = app.jellyfin.post("/Sessions/Playing", report_body(&s)).await;
                     app.notifier.notify("playback.changed", json!({ "itemId": s.item_id, "state": "playing", "player": "mpv" }));
                 }
@@ -592,10 +701,9 @@ async fn drive_mpv(app: &Arc<App>, socket: &PathBuf, url: &str, options: &str, s
                 ended_at_end = event["reason"] == "eof";
             }
             Some("property-change") => {
-                let mut due = None;
-                {
+                let due = {
                     let mut guard = app.playback.current.lock().await;
-                    let Some(s) = guard.as_mut().filter(|s| s.id == session_id) else { break };
+                    let Some(s) = guard.as_mut().filter(|s| s.id == job.session) else { break };
                     let mut event_name = "TimeUpdate";
                     match event["name"].as_str() {
                         Some("time-pos") => {
@@ -608,39 +716,28 @@ async fn drive_mpv(app: &Arc<App>, socket: &PathBuf, url: &str, options: &str, s
                             event_name = if s.paused { "Pause" } else { "Unpause" };
                             s.last_report = None;
                         }
+                        Some("aid") => s.audio = Tracks::jellyfin(&job.tracks.audio, &event["data"]).or(s.audio),
+                        Some("sid") => s.subtitle = Tracks::jellyfin(&job.tracks.subtitle, &event["data"]),
                         _ => {}
                     }
                     if s.started && s.last_report.map(|t| t.elapsed() >= REPORT_EVERY).unwrap_or(true) {
                         s.last_report = Some(Instant::now());
-                        due = Some((s.clone(), event_name));
+                        Some((s.clone(), event_name))
+                    } else {
+                        None
                     }
-                }
+                };
                 if let Some((s, name)) = due {
                     let mut body = report_body(&s);
                     body["EventName"] = json!(name);
+                    let _order = app.playback.reporting.lock().await;
                     let _ = app.jellyfin.post("/Sessions/Playing/Progress", body).await;
                 }
             }
             _ => {}
         }
     }
-    let finished = {
-        let mut guard = app.playback.current.lock().await;
-        if guard.as_ref().map(|s| s.id == session_id).unwrap_or(false) { guard.take() } else { None }
-    };
-    if let Some(s) = finished {
-        if s.started {
-            let _ = report_stopped(app, &s).await;
-        }
-        app.notifier.notify(
-            "playback.changed",
-            json!({ "itemId": s.item_id, "state": "stopped", "player": "mpv", "position": s.position, "ended": ended_at_end }),
-        );
-    }
-    if let Some(mut child) = app.playback.mpv.lock().await.take() {
-        let _ = child.wait().await;
-    }
-    Ok(())
+    Ok(ended_at_end)
 }
 
 /// The current session, for the window to ask after a restart.
@@ -656,14 +753,11 @@ pub async fn status(app: &App) -> Value {
 
 /// Stop whatever plays, telling the server, and close mpv if it was ours.
 pub async fn stop_all(app: &App) {
-    if let Some(s) = app.playback.current.lock().await.take() {
-        if s.started {
-            let _ = report_stopped(app, &s).await;
-        }
+    let current = app.playback.current.lock().await.take();
+    if let Some(s) = current {
+        end_session(app, &s).await;
     }
-    if let Some(mut child) = app.playback.mpv.lock().await.take() {
-        let _ = child.kill().await;
-    }
+    stop_mpv(app);
 }
 
 #[cfg(test)]
@@ -714,6 +808,14 @@ mod tests {
         prefs.subtitle_mode = "default".into();
         assert_eq!(pick_subtitle(&streams, &prefs, Some(1), Some(-1)), None);
         assert_eq!(pick_audio(&streams, "deu"), Some(2));
+    }
+
+    #[test]
+    fn maps_mpv_tracks_back() {
+        assert_eq!(Tracks::jellyfin(&[1, 2, 5], &json!(3)), Some(5));
+        assert_eq!(Tracks::jellyfin(&[1, 2], &json!(false)), None);
+        assert_eq!(Tracks::jellyfin(&[1, 2], &json!(0)), None);
+        assert_eq!(Tracks::jellyfin(&[1, 2], &json!(9)), None);
     }
 
     #[test]

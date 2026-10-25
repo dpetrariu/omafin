@@ -10,11 +10,13 @@ Rectangle {
   property string label: ""
   property string value: ""
   readonly property bool active: value !== ""
+  // A chip that always has a value (Sort) offers no clear while on its default.
+  property bool clearable: true
 
   signal choose()
   signal clear()
 
-  implicitWidth: row.implicitWidth + theme.space(active ? 8 : 20)
+  implicitWidth: row.implicitWidth + theme.space(active && clearable ? 8 : 20)
   implicitHeight: theme.space(28)
   radius: theme.radius
   color: active ? theme.selectedFill : (mouse.containsMouse ? theme.hoverFill : "transparent")
@@ -50,7 +52,7 @@ Rectangle {
       anchors.verticalCenter: parent.verticalCenter
     }
     IconButton {
-      visible: root.active
+      visible: root.active && root.clearable
       theme: root.theme
       icon: "close"
       size: root.theme.space(22)

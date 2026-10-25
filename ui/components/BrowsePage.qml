@@ -18,6 +18,9 @@ Item {
   // Until the keyboard or the mouse picks a row, the page starts at its
   // header when it has one and at the first row otherwise.
   property bool moved: false
+  // Where the cursor is on each row, by the row's key: marking a card
+  // rebuilds the rows, and the cursor must stay on that card.
+  property var cursors: ({})
   onHeaderFocusableChanged: if (!moved) rowIndex = headerFocusable ? -1 : 0
   Component.onCompleted: if (!moved) rowIndex = headerFocusable ? -1 : 0
   readonly property bool headerActive: headerFocusable && rowIndex < 0
@@ -135,8 +138,12 @@ Item {
           shape: modelData.shape || "poster"
           cardWidth: modelData.cardWidth || root.theme.space((modelData.shape || "poster") === "landscape" ? 280 : 150)
           episodeTitles: modelData.episodeTitles === true
-          currentIndex: modelData.startIndex || 0
           active: index === root.rowIndex
+          Component.onCompleted: {
+            var kept = modelData.key !== undefined ? root.cursors[modelData.key] : undefined
+            currentIndex = Math.min(modelData.items.length - 1, kept !== undefined ? kept : (modelData.startIndex || 0))
+          }
+          onCurrentIndexChanged: if (modelData.key !== undefined) root.cursors[modelData.key] = currentIndex
           onOpened: function(item) { root.moved = true; root.rowIndex = index; root.opened(item, modelData) }
           onPlayed: function(item) { root.moved = true; root.rowIndex = index; root.played(item, modelData) }
           onMenuRequested: function(item, anchor, x, y) { root.moved = true; root.rowIndex = index; root.menuRequested(item, anchor, x, y) }
