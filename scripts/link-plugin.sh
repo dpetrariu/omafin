@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Link this checkout into Omarchy's plugin folder and enable it.
+set -euo pipefail
+project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+plugin_home="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins"
+install_path="$plugin_home/omafin"
+
+command -v omarchy >/dev/null || { echo "omarchy is required" >&2; exit 1; }
+[[ -x "$project_dir/bin/omafin" ]] || { echo "Build the backend first: make install" >&2; exit 1; }
+
+omarchy plugin validate "$project_dir"
+mkdir -p "$plugin_home"
+if [[ -L "$install_path" && "$(readlink -f "$install_path")" == "$project_dir" ]]; then
+  :
+elif [[ -e "$install_path" || -L "$install_path" ]]; then
+  echo "$install_path already exists and is not this checkout; move it away first" >&2
+  exit 1
+else
+  ln -s "$project_dir" "$install_path"
+fi
+apps="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+mkdir -p "$apps"
+install -m 644 "$project_dir/setup/omafin.desktop" "$apps/omafin.desktop"
+
+update-desktop-database "$apps" 2>/dev/null || true
+omarchy-shell shell rescanPlugins
+omarchy plugin enable omafin
+echo "Omafin is linked at $install_path. Click the film icon in the bar."

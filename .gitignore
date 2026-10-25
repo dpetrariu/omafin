@@ -1,0 +1,4 @@
+target/
+/bin/
+*.swp
+__pycache__/

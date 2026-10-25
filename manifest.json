@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "id": "omafin",
+  "name": "Omafin",
+  "version": "0.1.0",
+  "author": "omafin contributors",
+  "license": "GPL-3.0-or-later",
+  "description": "Your Jellyfin movies and shows in a native Omarchy window: continue watching, next up, libraries, details, search and a keyboard-first player with skip intro and up next. Hands any video to mpv in one key. Follows your Omarchy theme.",
+  "kinds": [
+    "service",
+    "bar-widget",
+    "panel"
+  ],
+  "entryPoints": {
+    "service": "ui/Service.qml",
+    "barWidget": "ui/BarWidget.qml",
+    "panel": "ui/App.qml"
+  },
+  "barWidget": {
+    "displayName": "Omafin",
+    "description": "Your Jellyfin library. A dot shows while mpv plays something from Omafin; click it to open the window.",
+    "category": "Media",
+    "aliases": ["jellyfin", "movies", "tv", "shows", "video", "player", "media", "mpv"],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "showBarIcon": true
+    },
+    "schema": [
+      {
+        "key": "showBarIcon",
+        "type": "boolean",
+        "label": "Show the icon in the bar",
+        "defaultValue": true,
+        "description": "Turn this off to keep Omafin out of the bar. Open the window with a keybinding: o.bind(\"SUPER + SHIFT + J\", \"Omafin\", \"omarchy shell shell toggle omafin '{}'\")"
+      }
+    ]
+  }
+}

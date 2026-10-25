@@ -1,0 +1,32 @@
+name: CI
+
+# Every push and pull request: unit tests, the backend end-to-end test
+# against the mock Jellyfin, and the UI logic tests. The off-screen UI test
+# needs an Omarchy shell and runs locally (make test-ui).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Unit tests
+        run: cargo test --locked
+      - name: Build
+        run: cargo build --locked
+      - name: ffmpeg for the test video
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Backend end-to-end
+        run: python3 tests/backend_e2e.py target/debug/omafin
+      - name: UI logic
+        run: node tests/ui_logic.js
+      - name: Shell scripts parse
+        run: for f in install.sh scripts/*.sh; do bash -n "$f"; done

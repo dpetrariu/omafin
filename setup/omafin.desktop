@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Omafin
+Comment=Your Jellyfin movies and shows
+Exec=omarchy-shell shell toggle omafin {}
+Icon=multimedia-video-player
+Terminal=false
+Categories=AudioVideo;Video;Player;
+Keywords=Jellyfin;Movies;TV;Shows;Video;

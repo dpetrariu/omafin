@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""A stand-in mpv for the tests: it opens the JSON IPC socket it is given,
+answers loadfile by "playing" for a few seconds of position updates, and
+writes what it was asked to $FAKE_MPV_LOG."""
+import json, os, socket, sys, time
+
+args = sys.argv[1:]
+sock_path = next(a.split("=", 1)[1] for a in args if a.startswith("--input-ipc-server="))
+log = open(os.environ.get("FAKE_MPV_LOG", os.devnull), "a")
+log.write(json.dumps({"argv": args}) + "\n"); log.flush()
+server = socket.socket(socket.AF_UNIX)
+server.bind(sock_path)
+server.listen(1)
+conn, _ = server.accept()
+out = conn.makefile("w")
+def send(event):
+    out.write(json.dumps(event) + "\n"); out.flush()
+buf = b""
+loaded = None
+while loaded is None:
+    buf += conn.recv(4096)
+    while b"\n" in buf:
+        line, buf = buf.split(b"\n", 1)
+        cmd = json.loads(line)
+        log.write(json.dumps(cmd) + "\n"); log.flush()
+        if cmd["command"][0] == "loadfile":
+            loaded = cmd["command"]
+start = 0.0
+for opt in (loaded[4] if len(loaded) > 4 else "").split(","):
+    if opt.startswith("start="):
+        start = float(opt[6:])
+send({"event": "file-loaded"})
+send({"event": "playback-restart"})
+for i in range(4):
+    send({"event": "property-change", "id": 1, "name": "time-pos", "data": start + i * 4})
+    time.sleep(0.3)
+send({"event": "property-change", "id": 2, "name": "pause", "data": True})
+time.sleep(0.3)
+send({"event": "end-file", "reason": "quit"})
+time.sleep(0.2)
+conn.close()
