@@ -149,15 +149,24 @@ pub async fn prepare(app: &App, params: &Value, player: Player) -> Result<Value>
         Some(i) => Some(i),
         None => pick_subtitle(&streams, &settings.playback, audio, source["defaultSubtitle"].as_i64()),
     };
+    // Converting is the server's work; unless it is allowed, the original
+    // file always plays and nothing asks the server to transcode.
+    let allow = settings.playback.allow_transcoding;
     let chosen_sub = subtitle.and_then(|i| streams.iter().find(|s| s["type"] == "Subtitle" && s["index"].as_i64() == Some(i)).cloned());
-    // The window cannot draw picture subtitles; the server burns them in.
-    let burn_in = player == Player::Window
+    let picture_sub = player == Player::Window
         && chosen_sub.as_ref().map(|s| profile::is_picture_subtitle(s["codec"].as_str().unwrap_or(""))).unwrap_or(false);
+    // The window cannot draw picture subtitles: the server burns them in
+    // when it may; otherwise they are left off here (mpv shows them).
+    let (subtitle, needs_mpv) = if picture_sub && !allow { (None, subtitle) } else { (subtitle, None) };
+    let burn_in = picture_sub && allow;
     let start = params.get("start").and_then(|v| v.as_f64()).unwrap_or(0.0).max(0.0);
     // After a file the window could not decode, the server converts it.
     let force_transcode = params.get("transcode").and_then(|v| v.as_bool()).unwrap_or(false);
+    if force_transcode && !allow {
+        return Err(Error::invalid("The server is set not to convert videos; play this one in mpv instead"));
+    }
     let convert = burn_in || force_transcode;
-    let max_bitrate = bitrate(app, params).await;
+    let max_bitrate = if allow { bitrate(app, params).await } else { 0 };
 
     let mut query = vec![
         format!("userId={uid}"),
@@ -172,6 +181,9 @@ pub async fn prepare(app: &App, params: &Value, player: Player) -> Result<Value>
     if max_bitrate > 0 {
         query.push(format!("maxStreamingBitrate={max_bitrate}"));
     }
+    if !allow {
+        query.push("enableTranscoding=false&enableDirectStream=false".into());
+    }
     let body = json!({
         "UserId": uid,
         "MediaSourceId": source_id,
@@ -179,12 +191,12 @@ pub async fn prepare(app: &App, params: &Value, player: Player) -> Result<Value>
         "AudioStreamIndex": audio,
         "SubtitleStreamIndex": subtitle.unwrap_or(-1),
         "MaxStreamingBitrate": if max_bitrate > 0 { json!(max_bitrate) } else { Value::Null },
-        "DeviceProfile": profile::device_profile(player, max_bitrate),
+        "DeviceProfile": profile::device_profile(player, max_bitrate, allow),
         "EnableDirectPlay": !convert,
-        "EnableDirectStream": !convert,
-        "EnableTranscoding": true,
+        "EnableDirectStream": !convert && allow,
+        "EnableTranscoding": allow,
         "AllowVideoStreamCopy": !convert,
-        "AllowAudioStreamCopy": true,
+        "AllowAudioStreamCopy": allow,
         "AutoOpenLiveStream": true,
     });
     let info = app.jellyfin.post(&format!("/Items/{id}/PlaybackInfo?{}", query.join("&")), body).await?;
@@ -206,7 +218,9 @@ pub async fn prepare(app: &App, params: &Value, player: Player) -> Result<Value>
         .and_then(|a| a.iter().find(|ms| ms["Id"].as_str() == Some(&source_id)).or_else(|| a.first()))
         .cloned()
         .ok_or_else(|| Error::new(crate::error::SERVER, "Jellyfin offered no way to play this"))?;
-    let direct = answered["SupportsDirectPlay"].as_bool().unwrap_or(false) && !convert;
+    // Without conversion, the file plays as it is even when the server would
+    // rather convert it: both players decode nearly everything.
+    let direct = (answered["SupportsDirectPlay"].as_bool().unwrap_or(false) || !allow) && !convert;
     let (method, path, reasons) = if direct {
         let mut url = format!("/Videos/{id}/stream?static=true&mediaSourceId={source_id}&deviceId={}", app.jellyfin.device_id());
         if !session_id.is_empty() {
@@ -290,6 +304,9 @@ pub async fn prepare(app: &App, params: &Value, player: Player) -> Result<Value>
         "audioIndex": audio,
         "subtitleIndex": subtitle,
         "burnedIn": burn_in,
+        "allowTranscoding": allow,
+        // Picture subtitles asked for that only mpv can show without the server.
+        "needsMpv": needs_mpv,
         "audio": audio_tracks,
         "subtitles": subtitles,
         "video": video,

@@ -15,6 +15,8 @@ Item {
   property bool attention: false
   property real iconSize: theme.icon
   property real size: Math.max(theme.space(26), iconSize + theme.space(10))
+  // A circle with a border, to sit in a row of actions beside a PlayButton.
+  property bool round: false
 
   signal clicked()
 
@@ -25,12 +27,12 @@ Item {
   Rectangle {
     anchors.fill: parent
     anchors.margins: root.theme.space(1)
-    radius: root.theme.radius
+    radius: root.round ? width / 2 : root.theme.radius
     color: mouse.pressed ? root.theme.pressedFill
       : root.selected ? root.theme.selectedFill
-      : mouse.containsMouse ? root.theme.hoverFill : "transparent"
-    border.width: root.attention ? root.theme.borderWidth : 0
-    border.color: root.theme.accent
+      : mouse.containsMouse ? root.theme.hoverFill : root.round ? root.theme.alpha(root.theme.background, 0.45) : "transparent"
+    border.width: root.attention || root.round ? root.theme.borderWidth : 0
+    border.color: root.attention ? root.theme.accent : root.theme.border
   }
 
   Glyph {

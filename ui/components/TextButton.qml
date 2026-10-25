@@ -13,6 +13,8 @@ Item {
   property bool selected: false
   property bool busy: false
   property real fontSize: theme.body
+  // Rounded ends, to sit beside a PlayButton.
+  property bool pill: false
   readonly property color tone: danger ? theme.urgent : (primary ? theme.accent : theme.foreground)
 
   signal clicked()
@@ -23,7 +25,7 @@ Item {
 
   Rectangle {
     anchors.fill: parent
-    radius: root.theme.radius
+    radius: root.pill ? height / 2 : root.theme.radius
     color: mouse.pressed ? root.theme.pressedFill
       : root.selected ? root.theme.selectedFill
       : mouse.containsMouse ? root.theme.hoverFill : "transparent"

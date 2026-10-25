@@ -110,6 +110,7 @@ test("trickplay frames come from the right tile and spot", () => {
 test("streams and transcodes are said in words", () => {
   assert.strictEqual(Format.videoTag({ width: 3840, height: 1600, codec: "hevc", range: "HDR10" }), "4K HEVC HDR10")
   assert.strictEqual(Format.videoTag({ width: 1920, height: 800, codec: "h264", range: "SDR" }), "1080p H264")
+  assert.strictEqual(Format.videoTag({ width: 3840, height: 2160, codec: "hevc", range: "DOVIWithEL" }), "4K HEVC Dolby Vision")
   assert.strictEqual(Format.reasonsLabel(["ContainerBitrateExceedsLimit", "VideoBitrateNotSupported", "AudioCodecNotSupported"]), "the quality limit, the audio format")
   assert.strictEqual(Format.streamLabel({ label: "English - SRT", isExternal: true }), "English - SRT · external")
   assert.strictEqual(Format.bitrate(8000000), "8.0 Mbps")

@@ -273,7 +273,18 @@ def main():
         assert status == 206 and len(body) == (100 if media else 64), (status, len(body))
         print("ok: direct play")
 
-        # Picture subtitles in the window: the server converts, the URL is clean.
+        # By default nothing asks the server to convert: picture subtitles are
+        # left to mpv, quality limits are ignored, a forced convert is refused.
+        plain = b.call("play.prepare", {"id": ARRIVAL, "subtitleIndex": 4, "maxBitrate": 100000})
+        assert plain["method"] == "DirectPlay" and plain["subtitleIndex"] is None and plain["needsMpv"] == 4, plain
+        assert plain["allowTranscoding"] is False and "/stream?static=true" in plain["url"]
+        b.refused("play.prepare", {"id": BLADE, "transcode": True}, "not to convert")
+        asked = state(port)["playbackInfo"]
+        assert asked and all(a["enableTranscoding"] is False and a["transcodingProfiles"] == 0 for a in asked), asked
+        b.call("settings.update", {"patch": {"playback": {"allowTranscoding": True}}})
+        print("ok: the server is never asked to convert unless allowed")
+
+        # Allowed: picture subtitles in the window are burned in, the URL is clean.
         burned = b.call("play.prepare", {"id": ARRIVAL, "subtitleIndex": 4})
         assert burned["method"] == "Transcode" and burned["burnedIn"] is True and burned["hls"] is True, burned
         assert "ApiKey" not in burned["url"] and "SubtitleStreamIndex=4" in burned["url"]

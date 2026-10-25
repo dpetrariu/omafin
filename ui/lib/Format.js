@@ -175,7 +175,10 @@ function videoTag(video) {
   var w = Number(video.width || 0)
   var res = w >= 3200 || h >= 2000 ? "4K" : h >= 1000 || w >= 1900 ? "1080p" : h >= 700 || w >= 1260 ? "720p" : h > 0 ? h + "p" : ""
   var parts = [res, String(video.codec || "").toUpperCase()]
-  if (video.range && video.range !== "SDR" && video.range !== "Unknown") parts.push(video.range)
+  var range = String(video.range || "")
+  if (/^DOVI/.test(range)) parts.push("Dolby Vision")
+  else if (range === "HDR10Plus") parts.push("HDR10+")
+  else if (range && range !== "SDR" && range !== "Unknown") parts.push(range)
   return parts.filter(function(p) { return p !== "" }).join(" ")
 }
 

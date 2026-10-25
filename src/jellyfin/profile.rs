@@ -23,7 +23,9 @@ pub enum Player {
     Mpv,
 }
 
-pub fn device_profile(player: Player, max_bitrate: u64) -> Value {
+/// `convert` says whether the server may transcode at all; without it the
+/// profile names no way to convert, so the server cannot choose one.
+pub fn device_profile(player: Player, max_bitrate: u64, convert: bool) -> Value {
     let max = if max_bitrate == 0 { 400_000_000 } else { max_bitrate };
     let mut subtitles: Vec<Value> = Vec::new();
     match player {
@@ -31,8 +33,10 @@ pub fn device_profile(player: Player, max_bitrate: u64) -> Value {
             for format in TEXT_SUBTITLES {
                 subtitles.push(json!({ "Format": format, "Method": "External" }));
             }
-            for format in PICTURE_SUBTITLES {
-                subtitles.push(json!({ "Format": format, "Method": "Encode" }));
+            if convert {
+                for format in PICTURE_SUBTITLES {
+                    subtitles.push(json!({ "Format": format, "Method": "Encode" }));
+                }
             }
         }
         Player::Mpv => {
@@ -51,14 +55,14 @@ pub fn device_profile(player: Player, max_bitrate: u64) -> Value {
             { "Container": VIDEO_CONTAINERS, "Type": "Video", "VideoCodec": VIDEO_CODECS, "AudioCodec": AUDIO_CODECS },
             { "Container": "mp3,aac,m4a,flac,ogg,opus,wav,alac", "Type": "Audio" }
         ],
-        "TranscodingProfiles": [
+        "TranscodingProfiles": if convert { json!([
             {
                 "Container": "ts", "Type": "Video", "Protocol": "hls", "Context": "Streaming",
                 "VideoCodec": "h264,hevc", "AudioCodec": "aac,ac3,eac3",
                 "MaxAudioChannels": "6", "MinSegments": 1, "BreakOnNonKeyFrames": true
             },
             { "Container": "mp3", "Type": "Audio", "AudioCodec": "mp3", "Protocol": "http", "Context": "Streaming" }
-        ],
+        ]) } else { json!([]) },
         "ContainerProfiles": [],
         "CodecProfiles": [],
         "SubtitleProfiles": subtitles,
@@ -75,14 +79,21 @@ mod tests {
 
     #[test]
     fn window_burns_in_picture_subtitles_only() {
-        let p = device_profile(Player::Window, 0);
+        let p = device_profile(Player::Window, 0, true);
         let subs = p["SubtitleProfiles"].as_array().unwrap();
         let method = |f: &str| subs.iter().find(|s| s["Format"] == f).unwrap()["Method"].clone();
         assert_eq!(method("pgssub"), "Encode");
         assert_eq!(method("srt"), "External");
-        let mpv = device_profile(Player::Mpv, 8_000_000);
+        let mpv = device_profile(Player::Mpv, 8_000_000, true);
         assert_eq!(mpv["MaxStreamingBitrate"], 8_000_000);
         assert!(mpv["SubtitleProfiles"].as_array().unwrap().iter().all(|s| s["Method"] != "Encode"));
+    }
+
+    #[test]
+    fn without_conversion_names_no_way_to_convert() {
+        let p = device_profile(Player::Window, 0, false);
+        assert_eq!(p["TranscodingProfiles"], json!([]));
+        assert!(p["SubtitleProfiles"].as_array().unwrap().iter().all(|s| s["Method"] != "Encode"));
     }
 
     #[test]

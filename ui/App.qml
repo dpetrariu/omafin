@@ -758,6 +758,7 @@ Item {
       z: 50
       onClosed: root.focusContent()
       onToast: function(text, tone) { toast.show(text, { tone: tone }) }
+      onToastAction: function(text, actionText, action) { toast.show(text, { actionText: actionText, action: action, duration: 8000 }) }
       onOpenDetails: function(item) { root.openItem(item) }
       onMenuRequested: function(items, anchor, handler) { root.showMenu(items, anchor, handler) }
       onFullscreenToggled: root.fullscreen = !root.fullscreen

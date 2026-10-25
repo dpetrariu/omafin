@@ -36,6 +36,7 @@ STATE = {
     "reports": [],      # playback reports in order
     "logouts": 0,
     "requests": [],     # method, path (writes only)
+    "playbackInfo": [], # what each PlaybackInfo asked for
 }
 MEDIA = {"dir": None}
 
@@ -279,6 +280,7 @@ class Handler(BaseHTTPRequestHandler):
                 "reports": STATE["reports"], "logouts": STATE["logouts"], "tokens": len(STATE["tokens"]),
                 "quick": [{"code": v["code"], "authorized": v["authorized"]} for v in STATE["quick"].values()],
                 "writes": STATE["requests"],
+                "playbackInfo": STATE["playbackInfo"],
             })
         if path == "/_approve" and method == "POST":
             for v in STATE["quick"].values():
@@ -513,14 +515,21 @@ class Handler(BaseHTTPRequestHandler):
             return {"ErrorCode": "NoCompatibleStream", "MediaSources": []}
         session = secrets.token_hex(16)
         token = self.token(q)
+        may_convert = body.get("EnableTranscoding", True) is not False and q.get("enableTranscoding", ["true"])[0] != "false"
+        STATE["playbackInfo"].append({"item": item_id, "enableTranscoding": may_convert,
+                                      "transcodingProfiles": len((body.get("DeviceProfile") or {}).get("TranscodingProfiles") or []),
+                                      "subtitle": body.get("SubtitleStreamIndex")})
         sources = []
         cap = body.get("MaxStreamingBitrate") or int(q.get("maxStreamingBitrate", ["0"])[0] or 0)
         for ms in item["MediaSources"]:
             out = json.loads(json.dumps(ms))
             direct = body.get("EnableDirectPlay", True) and not (cap and cap < ms["Bitrate"])
+            if not may_convert:
+                # Like Jellyfin: nothing to offer but the file, whatever it thinks of it.
+                direct = False if body.get("EnableDirectPlay") is False else direct
             out["SupportsDirectPlay"] = direct
             out["SupportsDirectStream"] = direct
-            if not direct:
+            if not direct and may_convert:
                 reasons = "ContainerBitrateExceedsLimit" if cap and cap < ms["Bitrate"] else "SubtitleCodecNotSupported"
                 dashed = "%s-%s-%s-%s-%s" % (item_id[:8], item_id[8:12], item_id[12:16], item_id[16:20], item_id[20:])
                 out["TranscodingUrl"] = ("/videos/%s/master.m3u8?DeviceId=x&MediaSourceId=%s&PlaySessionId=%s&ApiKey=%s&SubtitleMethod=Encode&TranscodeReasons=%s"

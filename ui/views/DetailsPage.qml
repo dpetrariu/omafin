@@ -186,6 +186,12 @@ Item {
       if (audioIndex !== null) options.audioIndex = audioIndex
       if (subtitleIndex !== null) options.subtitleIndex = subtitleIndex
     }
+    // Picture subtitles the server may not burn in: only mpv shows them.
+    var picked = subtitleStreams.filter(function(s) { return s.index === root.subtitleIndex })[0]
+    if (picked && /^(pgssub|pgs|dvdsub|dvbsub|vobsub)$/i.test(picked.codec || "") && service.playbackPrefs.allowTranscoding !== true && service.mpvAvailable) {
+      playInMpv(playTarget, options)
+      return
+    }
     playWith(playTarget, options)
   }
 
@@ -209,7 +215,8 @@ Item {
   function chooseSubtitles(anchor) {
     var current = subtitleIndex === null ? (source && source.defaultSubtitle !== null && source.defaultSubtitle >= 0 ? source.defaultSubtitle : -1) : subtitleIndex
     var items = [{ id: "-1", label: "Off", icon: current === -1 ? "check" : "" }].concat(subtitleStreams.map(function(s) {
-      return { id: String(s.index), label: Format.streamLabel(s), icon: s.index === current ? "check" : "" }
+      var mpvOnly = s.codec && /^(pgssub|pgs|dvdsub|dvbsub|vobsub)$/i.test(s.codec) && root.service.playbackPrefs.allowTranscoding !== true
+      return { id: String(s.index), label: Format.streamLabel(s) + (mpvOnly ? " (plays in mpv)" : ""), icon: s.index === current ? "check" : "" }
     }))
     showMenu(items, anchor, function(id) { root.subtitleIndex = Number(id) })
   }
@@ -354,6 +361,8 @@ Item {
             visible: !!root.playTarget && Format.progress(root.playTarget) > 0
             theme: root.theme
             size: root.theme.space(40)
+            round: true
+            anchors.verticalCenter: parent.verticalCenter
             icon: "restart"
             tooltip: "Play from the start (Shift+P)"
             onClicked: root.playShown(true)
@@ -361,6 +370,8 @@ Item {
           IconButton {
             theme: root.theme
             size: root.theme.space(40)
+            round: true
+            anchors.verticalCenter: parent.verticalCenter
             icon: root.shown && root.shown.user && root.shown.user.played ? "playedOn" : "played"
             color: root.shown && root.shown.user && root.shown.user.played ? root.theme.accent : root.theme.foreground
             tooltip: root.shown && root.shown.user && root.shown.user.played ? "Watched. Mark as not watched (w)" : "Mark as watched (w)"
@@ -369,6 +380,8 @@ Item {
           IconButton {
             theme: root.theme
             size: root.theme.space(40)
+            round: true
+            anchors.verticalCenter: parent.verticalCenter
             icon: root.shown && root.shown.user && root.shown.user.favorite ? "favoriteOn" : "favorite"
             color: root.shown && root.shown.user && root.shown.user.favorite ? root.theme.urgent : root.theme.foreground
             tooltip: root.shown && root.shown.user && root.shown.user.favorite ? "A favourite. Remove from favourites (f)" : "Add to favourites (f)"
@@ -378,6 +391,8 @@ Item {
             visible: root.playTarget !== null && root.service.mpvAvailable
             theme: root.theme
             size: root.theme.space(40)
+            round: true
+            anchors.verticalCenter: parent.verticalCenter
             icon: "external"
             tooltip: "Play in mpv (m)"
             onClicked: root.playInMpv(root.playTarget, { audioIndex: root.audioIndex, subtitleIndex: root.subtitleIndex })
@@ -386,6 +401,8 @@ Item {
             visible: !!root.details && root.details.trailers && root.details.trailers.length > 0
             theme: root.theme
             size: root.theme.space(40)
+            round: true
+            anchors.verticalCenter: parent.verticalCenter
             icon: "trailer"
             tooltip: "Watch the trailer in your browser"
             onClicked: Qt.openUrlExternally(root.details.trailers[0])
@@ -394,6 +411,8 @@ Item {
             id: moreButton
             theme: root.theme
             size: root.theme.space(40)
+            round: true
+            anchors.verticalCenter: parent.verticalCenter
             icon: "moreHorizontal"
             tooltip: "More (.)"
             onClicked: root.menuItem(root.shown, moreButton, 0, moreButton.height)
@@ -409,6 +428,7 @@ Item {
             visible: root.audioStreams.length > 1
             theme: root.theme
             icon: "audio"
+            pill: true
             fontSize: root.theme.small
             text: "Audio: " + root.streamName(root.audioStreams, root.audioIndex === null ? (root.source ? root.source.defaultAudio : -1) : root.audioIndex, "Default") + "..."
             onClicked: root.chooseAudio(audioButton)
@@ -418,6 +438,7 @@ Item {
             visible: root.subtitleStreams.length > 0
             theme: root.theme
             icon: "subtitles"
+            pill: true
             fontSize: root.theme.small
             text: {
               var current = root.subtitleIndex === null ? (root.source && root.source.defaultSubtitle !== null ? root.source.defaultSubtitle : -1) : root.subtitleIndex

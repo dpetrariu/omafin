@@ -230,13 +230,29 @@ def main():
         h.js("hooks.player.seekTo(1)")
         time.sleep(1.5)
         h.shot("10-subtitles")
+        # Picture subtitles, with the server not allowed to convert (the
+        # default): the window hands the film to mpv instead.
+        mpv_before = len([r for r in reports(port, ARRIVAL) if r["kind"] == "start"])
+        h.js("hooks.player.chooseSubtitles(4)")
+        wait_for("mpv takes over", lambda: h.value("hooks.player.active") is False, 10)
+        wait_for("mpv plays it", lambda: len([r for r in reports(port, ARRIVAL) if r["kind"] == "start"]) > mpv_before, 10)
+        assert all(a["enableTranscoding"] is False for a in state(port)["playbackInfo"]), "something asked the server to convert"
+        print("ok: picture subtitles go to mpv; nothing asked the server to convert")
+
+        # Allowed to convert: the same subtitles are burned in by the server.
+        h.js("service.updateSettings({ playback: { allowTranscoding: true } })")
+        wait_for("the setting", lambda: h.value("service.playbackPrefs.allowTranscoding") is True, 5)
+        time.sleep(2)
+        h.js(f"app.playItem({{ id: '{ARRIVAL}', type: 'Movie', mediaType: 'Video', name: 'Arrival', user: {{}} }}, {{ restart: true }})")
+        wait_for("Arrival plays again", lambda: h.value("hooks.player.started") is True, 20)
         h.js("hooks.player.chooseSubtitles(4)")
         wait_for("a converted stream", lambda: h.value("hooks.player.info && hooks.player.info.burnedIn") is True, 10)
         assert h.value("hooks.player.info.method") == "Transcode"
         h.key("playbackInfo", 0.8)
         h.shot("11-burned-in")
         h.key("closePlayer", 1.0)
-        print("ok: subtitles in the window and burned in")
+        h.js("service.updateSettings({ playback: { allowTranscoding: false } })")
+        print("ok: subtitles in the window and burned in when allowed")
 
         # An episode: Skip intro, then Up next as the credits start.
         h.js(f"app.playItem({{ id: '{S1E2}', type: 'Episode', mediaType: 'Video', seriesId: '{HOMELAND}', user: {{}} }}, {{ restart: true }})")

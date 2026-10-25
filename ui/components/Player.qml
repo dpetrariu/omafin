@@ -52,6 +52,7 @@ Item {
 
   signal closed()
   signal toast(string text, string tone)
+  signal toastAction(string text, string actionText, var action)
   signal openDetails(var item)
   signal menuRequested(var items, Item anchor, var handler)
   signal fullscreenToggled()
@@ -105,6 +106,7 @@ Item {
       root.loadSubtitles()
       player.source = root.service.mediaUrl(result.url)
       player.play()
+      if (result.needsMpv !== null && result.needsMpv !== undefined) root.offerMpvFor(result.needsMpv)
     })
   }
 
@@ -269,8 +271,24 @@ Item {
     reload({ audioIndex: index })
   }
 
+  // Picture subtitles without the server converting: only mpv draws them.
+  function offerMpvFor(index) {
+    var s = info ? info.subtitles.filter(function(x) { return x.index === index })[0] : null
+    var name = s ? Format.streamLabel(s) : "These subtitles"
+    if (!service.mpvAvailable) {
+      toast(name + " are pictures the window cannot draw, and mpv is not installed", "error")
+      return
+    }
+    toastAction(name + " show in mpv", "Play in mpv", function() { root.continueInMpv(index) })
+  }
+
   function chooseSubtitles(index) {
     var stream = info.subtitles.filter(function(s) { return s.index === index })[0] || null
+    if (stream && stream.picture && !info.allowTranscoding) {
+      if (service.mpvAvailable) continueInMpv(index)
+      else offerMpvFor(index)
+      return
+    }
     var needsServer = (stream && stream.picture) || (info.burnedIn && index !== subtitleIndex)
     if (needsServer) {
       if (stream && stream.picture) toast("The server draws these subtitles into the video; mpv shows them without converting (Shift+M)", "info")
@@ -293,6 +311,7 @@ Item {
     if (choice < 0 || !info.subtitles.some(function(s) { return s.index === choice })) {
       var text = info.subtitles.filter(function(s) { return !s.picture })
       if (text.length === 0 && info.subtitles.length === 0) { say("No subtitles"); return }
+      if (text.length === 0 && !info.allowTranscoding) { offerMpvFor(info.subtitles[0].index); return }
       choice = (text[0] || info.subtitles[0]).index
     }
     chooseSubtitles(choice)
@@ -309,9 +328,10 @@ Item {
     load(info.item.id, at, options)
   }
 
-  function continueInMpv() {
+  function continueInMpv(subtitleOverride) {
     if (!info) return
-    var params = { id: info.item.id, start: position, audioIndex: audioIndex, subtitleIndex: subtitleIndex }
+    var subs = subtitleOverride !== undefined && subtitleOverride !== null ? subtitleOverride : subtitleIndex
+    var params = { id: info.item.id, start: position, audioIndex: audioIndex, subtitleIndex: subs }
     reportStop()
     player.pause()
     var at = position
@@ -341,7 +361,8 @@ Item {
   function subtitleMenu(anchor) {
     if (!info) return
     menuRequested([{ id: "-1", label: "Off", icon: root.subtitleIndex < 0 ? "check" : "" }].concat(info.subtitles.map(function(s) {
-      return { id: String(s.index), label: Format.streamLabel(s) + (s.picture ? " (converted by the server)" : ""), icon: s.index === root.subtitleIndex ? "check" : "" }
+      var note = !s.picture ? "" : root.info.allowTranscoding ? " (converted by the server)" : " (in mpv)"
+      return { id: String(s.index), label: Format.streamLabel(s) + note, icon: s.index === root.subtitleIndex ? "check" : "" }
     })), anchor, function(id) { root.chooseSubtitles(Number(id)) })
   }
   readonly property var qualities: [
@@ -764,6 +785,7 @@ Item {
           }
           IconButton {
             id: qualityButton
+            visible: !!root.info && root.info.allowTranscoding === true
             theme: root.theme
             icon: "quality"
             color: "white"
@@ -1092,7 +1114,7 @@ Item {
       anchors.horizontalCenter: parent.horizontalCenter
       spacing: root.theme.space(8)
       TextButton {
-        visible: !!root.info && !root.info.hls
+        visible: !!root.info && !root.info.hls && root.info.allowTranscoding === true
         theme: root.theme
         text: "Let the server convert it"
         primary: true

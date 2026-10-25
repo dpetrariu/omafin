@@ -53,7 +53,12 @@ impl Default for Settings {
 pub struct PlaybackSettings {
     /// "window" plays in Omafin, "mpv" hands every video to mpv.
     pub player: String,
+    /// Whether the server may convert videos (transcode, burn in subtitles).
+    /// Off by default: the original file always plays, and anything the
+    /// window cannot show goes to mpv instead.
+    pub allow_transcoding: bool,
     /// Bits per second; 0 means as much as the file needs (direct play).
+    /// Only used when the server may convert.
     pub max_bitrate: u64,
     /// Bitrate cap away from home, where uploads are usually slower.
     pub max_bitrate_away: u64,
@@ -76,8 +81,9 @@ impl Default for PlaybackSettings {
     fn default() -> Self {
         Self {
             player: "window".into(),
+            allow_transcoding: false,
             max_bitrate: 0,
-            max_bitrate_away: 8_000_000,
+            max_bitrate_away: 0,
             skip_intro: "ask".into(),
             skip_credits: "ask".into(),
             autoplay_next: true,
@@ -184,6 +190,7 @@ impl Settings {
                     for (k, v) in obj {
                         match k.as_str() {
                             "player" => p.player = choice(v, &["window", "mpv"])?,
+                            "allowTranscoding" => p.allow_transcoding = bool_of(v)?,
                             "maxBitrate" => p.max_bitrate = u64_of(v)?,
                             "maxBitrateAway" => p.max_bitrate_away = u64_of(v)?,
                             "skipIntro" => p.skip_intro = choice(v, &["ask", "auto", "off"])?,
@@ -309,6 +316,13 @@ mod tests {
         assert!(settings.apply_patch(&json!({"playback": {"player": "vlc"}})).is_err());
         // Sign-in fields are not patchable.
         assert!(settings.apply_patch(&json!({"userId": "x"})).is_err());
+    }
+
+    #[test]
+    fn never_transcodes_by_default() {
+        let p = PlaybackSettings::default();
+        assert!(!p.allow_transcoding);
+        assert_eq!((p.max_bitrate, p.max_bitrate_away), (0, 0));
     }
 
     #[test]

@@ -215,6 +215,9 @@ Item {
             theme: root.theme
             text: "Details"
             icon: "info"
+            pill: true
+            height: root.theme.space(40)
+            anchors.verticalCenter: parent.verticalCenter
             onClicked: root.openItem(heroBox.item)
           }
         }

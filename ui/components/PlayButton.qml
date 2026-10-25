@@ -22,13 +22,23 @@ Item {
     anchors.fill: parent
     radius: height / 2
     color: mouse.pressed ? Qt.darker(root.theme.accent, 1.2) : root.theme.accent
-    clip: true
-    // Progress as a darker band from the left.
+    // How far you got: a thin line along the bottom, inside the curve.
     Rectangle {
       visible: root.progress > 0
-      width: parent.width * root.progress
-      height: parent.height
+      x: parent.radius
+      anchors.bottom: parent.bottom
+      anchors.bottomMargin: root.theme.space(6)
+      width: parent.width - parent.radius * 2
+      height: root.theme.space(3)
+      radius: height / 2
       color: Qt.rgba(0, 0, 0, 0.22)
+      Rectangle {
+        width: parent.width * root.progress
+        height: parent.height
+        radius: parent.radius
+        color: root.theme.background
+        opacity: 0.75
+      }
     }
     Rectangle {
       anchors.fill: parent
@@ -38,14 +48,16 @@ Item {
     }
   }
 
+  // The keyboard cursor: a thin ring just outside the pill.
   Rectangle {
     visible: root.current
     anchors.fill: parent
-    anchors.margins: -root.theme.space(4)
+    anchors.margins: -root.theme.space(3)
     radius: height / 2
     color: "transparent"
-    border.width: root.theme.space(2)
+    border.width: root.theme.space(1.5)
     border.color: root.theme.foreground
+    opacity: 0.8
   }
 
   Row {

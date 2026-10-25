@@ -130,14 +130,23 @@ Item {
       }
       Note { visible: !root.service.mpvAvailable; text: "mpv is not installed: sudo pacman -S mpv"; color: root.theme.urgent }
 
-      Note { text: "Quality at home. Original sends files as they are; a limit makes the server convert larger ones." }
+      SwitchRow {
+        theme: root.theme
+        text: "Let the server convert videos"
+        detail: "Off: every video plays from its original file and the server never transcodes. Picture subtitles (PGS, DVD), which the window cannot draw, open in mpv. On: the server may convert to a lower quality, burn subtitles in, or fix a file the window cannot play."
+        checked: root.p.allowTranscoding === true
+        onToggled: root.setPlayback("allowTranscoding", !(root.p.allowTranscoding === true))
+      }
+      Note { visible: root.p.allowTranscoding === true; text: "Quality at home. Original sends files as they are; a limit makes the server convert larger ones." }
       Choices {
+        visible: root.p.allowTranscoding === true
         options: [{ id: 0, label: "Original" }, { id: 40000000, label: "40 Mbps" }, { id: 20000000, label: "20 Mbps" }, { id: 10000000, label: "10 Mbps" }, { id: 4000000, label: "4 Mbps" }]
         value: Number(root.p.maxBitrate || 0)
         onPicked: function(id) { root.setPlayback("maxBitrate", id) }
       }
-      Note { text: "Quality away from home (when only the away address answers)." }
+      Note { visible: root.p.allowTranscoding === true; text: "Quality away from home (when only the away address answers)." }
       Choices {
+        visible: root.p.allowTranscoding === true
         options: [{ id: 0, label: "Original" }, { id: 20000000, label: "20 Mbps" }, { id: 8000000, label: "8 Mbps" }, { id: 4000000, label: "4 Mbps" }, { id: 1500000, label: "1.5 Mbps" }]
         value: Number(root.p.maxBitrateAway === undefined ? 8000000 : root.p.maxBitrateAway)
         onPicked: function(id) { root.setPlayback("maxBitrateAway", id) }
