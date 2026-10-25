@@ -32,13 +32,19 @@ MouseArea {
 
   // True while the fingers move or the page coasts; a page turns off its
   // keyboard glide meanwhile.
-  readonly property bool active: fingersDown || coast.running
+  readonly property bool active: fingersDown || frame.running
   property bool fingersDown: false
+  property bool coasting: false
   property real velocity: 0          // px/s, positive scrolls down
-  // Where the page really is, to the fraction of a pixel; the Flickable is
-  // only ever put on whole screen pixels, so text does not shimmer against
-  // the posters as fractions come and go.
+  // Where the fingers or the glide say the page should be.
+  property real target: 0
+  // Where the page really is, to the fraction of a pixel. It follows
+  // `target` within about a frame, so touchpad events that arrive unevenly
+  // (two in one frame, none in the next) still move the page evenly. The
+  // Flickable is only put on whole screen pixels.
   property real exact: 0
+  // How quickly the page catches up with the fingers, in seconds.
+  readonly property real follow: 0.012
   property double lastEvent: 0
 
   // Before every wheel step, for a page that animates its keyboard moves.
@@ -55,46 +61,78 @@ MouseArea {
     return { top: top, bottom: Math.max(top, f.originY + f.contentHeight + f.bottomMargin - f.height) }
   }
 
+  function clamp(y) {
+    var b = bounds()
+    return Math.max(b.top, Math.min(b.bottom, y))
+  }
+
   function snap(y) {
     var dpr = Screen.devicePixelRatio > 0 ? Screen.devicePixelRatio : 1
     return Math.round(y * dpr) / dpr
   }
 
-  // Move by dy now; false when an edge stopped it.
-  function moveBy(dy) {
+  // Something else moved the page (a key, a new page of items, a drag):
+  // carry on from where it is.
+  function sync() {
     var f = flickable
-    if (!f || dy === 0) return true
-    // Something else moved the page (a key, a new page of items): start from there.
-    if (Math.abs(f.contentY - snap(exact)) > 0.01) exact = f.contentY
-    var b = bounds()
-    var next = Math.max(b.top, Math.min(b.bottom, exact + dy))
-    var free = Math.abs(next - (exact + dy)) < 0.5
-    exact = next
-    f.contentY = snap(next)
-    return free
+    if (!f) return
+    if (!frame.running) {
+      exact = target = f.contentY
+      return
+    }
+    if (Math.abs(f.contentY - snap(exact)) > 0.01) {
+      var shift = f.contentY - exact
+      exact = f.contentY
+      target = clamp(target + shift)
+    }
   }
 
+  // Move by dy at once, for sideways-free direct moves.
   function scrollBy(dy) {
     stop()
-    if (flickable) flickable.cancelFlick()
-    moveBy(dy)
+    if (!flickable) return
+    flickable.cancelFlick()
+    sync()
+    target = exact = clamp(exact + dy)
+    flickable.contentY = snap(exact)
   }
 
-  // Keyboard moves, drags and new pages call this: the glide gives way.
+  // Keyboard moves, drags and new pages call this: the glide gives way,
+  // and the page stays where it is now.
   function stop() {
-    coast.running = false
+    coasting = false
     velocity = 0
+    frame.running = false
+    target = exact
   }
 
-  // Each frame of a glide: move, then let the speed die away.
+  // Every frame: a glide moves the target on and slows down; the page
+  // eases toward the target.
   FrameAnimation {
-    id: coast
+    id: frame
     running: false
     onTriggered: {
+      var f = root.flickable
+      if (!f) { running = false; return }
+      if (Math.abs(f.contentY - root.snap(root.exact)) > 0.01) {
+        // Moved under us (a key, a drag): give way.
+        root.exact = root.target = f.contentY
+        root.coasting = false
+        root.velocity = 0
+      }
       var dt = Math.min(0.05, frameTime)
-      if (!root.moveBy(root.velocity * dt)) { root.stop(); return }
-      root.velocity *= Math.exp(-dt / root.glide)
-      if (Math.abs(root.velocity) < 15) root.stop()
+      if (root.coasting) {
+        var next = root.target + root.velocity * dt
+        var held = root.clamp(next)
+        root.target = held
+        root.velocity *= Math.exp(-dt / root.glide)
+        if (held !== next || Math.abs(root.velocity) < 15) { root.coasting = false; root.velocity = 0 }
+      }
+      root.target = root.clamp(root.target)
+      var gap = root.target - root.exact
+      root.exact = Math.abs(gap) < 0.25 ? root.target : root.exact + gap * (1 - Math.exp(-dt / root.follow))
+      f.contentY = root.snap(root.exact)
+      if (!root.coasting && !root.fingersDown && root.exact === root.target) running = false
     }
   }
 
@@ -111,16 +149,22 @@ MouseArea {
   }
 
   function begin(now) {
+    // Touching catches a glide where it is.
+    coasting = false
+    velocity = 0
+    sync()
+    target = exact
     fingersDown = true
-    stop()
     lastEvent = now
+    frame.running = true
   }
 
   function release(now) {
     fingersDown = false
     // Fingers that stopped before lifting leave nothing to coast on.
     if (now - lastEvent > 80) velocity = 0
-    if (Math.abs(velocity) > 40) coast.running = true
+    coasting = Math.abs(velocity) > 40
+    frame.running = true
   }
 
   // One wheel event, by its parts, so the UI tests can send one too.
@@ -149,7 +193,8 @@ MouseArea {
       if (!fingersDown && phase !== Qt.ScrollMomentum) begin(now)
       var move = -dy * fingerGain
       if (flickable) flickable.cancelFlick()
-      moveBy(move)
+      target = clamp(target + move)
+      frame.running = true
       var dt = Math.max(0.004, (now - lastEvent) / 1000)
       lastEvent = now
       var instant = Math.max(-maxSpeed, Math.min(maxSpeed, move / dt))
@@ -159,10 +204,12 @@ MouseArea {
     }
     // A wheel notch: speed for a glide of about `notch` pixels, added to a
     // glide already going the same way.
+    if (!frame.running) sync()
     var push = -dy / glide
     if (velocity !== 0 && (velocity > 0) !== (push > 0)) velocity = 0
     velocity = Math.max(-maxSpeed, Math.min(maxSpeed, velocity + push))
     lastEvent = now
-    coast.running = true
+    coasting = true
+    frame.running = true
   }
 }

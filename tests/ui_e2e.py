@@ -154,6 +154,10 @@ def main():
         h.js("hooks.toast.action()")
         wait_for("unwatched again", lambda: ARRIVAL not in state(port)["played"], 5)
         wait_for("back where it was", lambda: state(port)["positions"].get(ARRIVAL) == 4, 5)
+        # Undo refreshes Home; let it land before the next marks.
+        time.sleep(0.5)
+        wait_for("home refreshed", lambda: h.value("app.view().loading") is False, 10)
+        time.sleep(0.3)
         h.key("favorite", 1.0)
         wait_for("a favourite", lambda: ARRIVAL in state(port)["favorites"], 5)
         h.key("favorite", 1.0)
