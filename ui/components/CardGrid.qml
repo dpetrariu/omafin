@@ -15,6 +15,7 @@ Item {
   property real cardWidth: theme.space(150)
   property int currentIndex: 0
   property Component header: null
+  property alias wheel: wheel
 
   signal opened(var item, int index)
   signal played(var item, int index)
@@ -40,6 +41,7 @@ Item {
     toTop = false
     firstId = items.length > 0 ? String(items[0].id) : ""
     var y = same ? grid.contentY : grid.originY - grid.topMargin
+    if (!same) wheel.stop()
     grid.model = items
     if (!same) currentIndex = 0
     grid.contentY = y
@@ -61,6 +63,7 @@ Item {
 
   function move(delta) {
     if (items.length === 0) return
+    wheel.stop()
     currentIndex = Math.max(0, Math.min(items.length - 1, currentIndex + delta))
     grid.positionViewAtIndex(currentIndex, GridView.Contain)
     if (currentIndex >= items.length - columns * 3) needMore()
@@ -81,6 +84,7 @@ Item {
   }
 
   WheelScroller {
+    id: wheel
     flickable: grid
     notch: root.cardHeight + root.gap
   }

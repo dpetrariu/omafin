@@ -122,24 +122,25 @@ def main():
         assert h.value("app.view().home.nextUp[0].id") == S1E2
         print("ok: Quick Connect sign-in and home")
 
-        # One wheel notch moves the page a good step, even over a row of
-        # cards; Shift+wheel moves that row sideways instead.
+        # One wheel notch glides the page a good step, even over a row of
+        # cards; Home refreshing keeps the place.
         page = "app.view().browse"
         y0 = h.value(page + ".flickable.contentY")
         row_y = h.value(page + ".rowItem(1).mapToItem(" + page + ", 0, 40).y")
-        h.js(f"{page}.wheel.handle(0, -120, 0, 0, false, {row_y})")
+        h.js(f"{page}.wheel.handle(0, -120, 0, 0, false, {row_y}, 0)")
+        time.sleep(1.6)
         y1 = h.value(page + ".flickable.contentY")
         bottom = h.value(page + ".flickable.contentHeight - " + page + ".flickable.height")
         notch = h.value(page + ".wheel.notch")
-        assert notch >= 380 and abs(y1 - min(y0 + notch, bottom)) < 1, (y0, y1, notch, bottom)
-        # Home refreshes itself; it stays where it was.
+        assert notch >= 300 and abs(y1 - min(y0 + notch, bottom)) < notch * 0.03 + 2, (y0, y1, notch, bottom)
+        assert h.value(page + ".wheel.active") is False, "the glide did not settle"
         h.js("app.view().reload()")
         wait_for("home reloaded", lambda: h.value("app.view().loading") is False, 10)
         time.sleep(0.5)
         assert abs(h.value(page + ".flickable.contentY") - y1) < 2, "home jumped after a refresh"
-        time.sleep(0.3)
-        h.js(f"{page}.wheel.handle(0, 120, 0, 0, false, {row_y})")
-        assert h.value(page + ".flickable.contentY") == y0
+        h.js(f"{page}.wheel.handle(0, 120, 0, 0, false, {row_y}, 0)")
+        time.sleep(1.6)
+        assert abs(h.value(page + ".flickable.contentY") - y0) < notch * 0.03 + 2
         print("ok: wheel scrolling")
 
         # The keyboard: down to Continue watching, w marks it watched, Undo.
@@ -255,6 +256,27 @@ def main():
         assert h.value(gv + ".contentY") <= 1, "a new sort did not start at the top"
         h.js("(app.view().sort = 'name', app.view().descending = false, app.view().remember())")
         print("ok: long grids keep their place")
+
+        # A touchpad flick: the grid follows the fingers, then coasts on and
+        # slows to a stop. Fingers that pause before lifting do not coast.
+        w = grid + ".wheel"
+        start = h.value(gv + ".contentY")
+        h.js(f"({w}.handle(0, 0, 0, 0, false, 100, 1, 1000), " + ", ".join(f"{w}.handle(0, 0, 0, -60, false, 100, 2, {1000 + 16 * (i + 1)})" for i in range(6)) + f", {w}.handle(0, 0, 0, 0, false, 100, 3, 1100))")
+        followed = 6 * 60 * h.value(w + ".fingerGain")
+        time.sleep(2.0)
+        coasted = h.value(gv + ".contentY") - start
+        assert coasted > followed + 800, (coasted, followed)
+        assert h.value(w + ".active") is False, "the glide never stopped"
+        start = h.value(gv + ".contentY")
+        h.js(f"({w}.handle(0, 0, 0, 0, false, 100, 1, 5000), " + ", ".join(f"{w}.handle(0, 0, 0, -60, false, 100, 2, {5000 + 16 * (i + 1)})" for i in range(6)) + f", {w}.handle(0, 0, 0, 0, false, 100, 3, 5400))")
+        time.sleep(1.0)
+        assert abs(h.value(gv + ".contentY") - start - followed) < 2, "a paused release coasted"
+        # A key press catches a glide.
+        h.js(f"({w}.handle(0, 0, 0, 0, false, 100, 1, 9000), " + ", ".join(f"{w}.handle(0, 0, 0, -80, false, 100, 2, {9000 + 16 * (i + 1)})" for i in range(6)) + f", {w}.handle(0, 0, 0, 0, false, 100, 3, 9100))")
+        time.sleep(0.1)
+        h.nav("down")
+        assert h.value(w + ".active") is False, "a key did not stop the glide"
+        print("ok: touchpad momentum")
 
         # Search.
         h.nav("search:blade", 2)

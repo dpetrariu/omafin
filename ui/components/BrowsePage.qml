@@ -74,6 +74,7 @@ Item {
   }
 
   function reveal() {
+    wheel.stop()
     if (rowIndex < 0) { flick.contentY = 0; return }
     var row = rowItem(rowIndex)
     if (!row) return
@@ -113,8 +114,7 @@ Item {
   WheelScroller {
     id: wheel
     flickable: flick
-    notch: root.theme.space(400)
-    property bool scrolling: false
+    notch: root.theme.space(360)
     // A sideways swipe scrolls the row under the pointer.
     sideways: function(dx, y) {
       for (var i = 0; i < repeater.count; i++) {
@@ -124,8 +124,6 @@ Item {
         if (y >= p.y && y < p.y + row.height) { row.scrollBy(dx); return }
       }
     }
-    onScrolled: { scrolling = true; settle.restart() }
-    Timer { id: settle; interval: 200; onTriggered: wheel.scrolling = false }
   }
 
   Flickable {
@@ -136,7 +134,7 @@ Item {
     boundsBehavior: Flickable.StopAtBounds
     QQC.ScrollBar.vertical: QQC.ScrollBar {}
     // Keyboard moves glide; the wheel moves at once.
-    Behavior on contentY { enabled: !flick.moving && !wheel.scrolling; NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+    Behavior on contentY { enabled: !flick.moving && !wheel.active; NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
 
     Loader {
       id: headerLoader
