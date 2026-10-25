@@ -86,6 +86,97 @@ var GLYPHS = {
   circle: 0xF0766         // circle-outline
 }
 
+// Where each icon's drawn shape really is, measured from the font
+// (JetBrainsMono Nerd Font, rendered at 80 px): how far its visual centre
+// sits right of the text box's centre, and above the baseline, both as a
+// fraction of the font size. The font's own metrics do not say this
+// reliably, and its icons hang off their advance by different amounts, so
+// round buttons centre their icon by this table instead.
+var OPTICAL = {
+  logo: [0.1286, 0.3311],
+  home: [0.1159, 0.2922],
+  movies: [0.1206, 0.3681],
+  shows: [0.1685, 0.369],
+  collections: [0.1321, 0.3765],
+  folder: [0.0914, 0.3548],
+  playlists: [0.0847, 0.4262],
+  music: [0.0772, 0.3492],
+  books: [0.199, 0.357],
+  favorite: [0.1158, 0.4297],
+  favoriteOn: [0.1165, 0.4274],
+  played: [0.114, 0.3545],
+  playedOn: [0.1159, 0.3606],
+  play: [-0.0773, 0.3598],
+  playCircle: [0.1157, 0.3601],
+  pause: [0.0001, 0.3574],
+  next: [-0.0209, 0.3613],
+  previous: [0.0211, 0.3612],
+  skip: [0.0382, 0.3581],
+  rewind: [0.0818, 0.3969],
+  forward10: [0.1673, 0.397],
+  volume: [0.0874, 0.3596],
+  volumeLow: [-0.01, 0.3626],
+  mute: [0.0747, 0.3631],
+  subtitles: [0.1155, 0.3407],
+  audio: [0.1714, 0.3453],
+  speed: [0.1198, 0.3799],
+  quality: [-0.0037, 0.3578],
+  chapters: [0.0926, 0.3584],
+  video: [0.0874, 0.3655],
+  external: [0.0816, 0.373],
+  person: [0.0347, 0.2923],
+  people: [0.2003, 0.2946],
+  star: [0.116, 0.318],
+  clock: [0.1219, 0.3603],
+  calendar: [0.0751, 0.3613],
+  fullscreen: [0.0001, 0.3574],
+  fullscreenExit: [0.0001, 0.3574],
+  grid: [0.0751, 0.3678],
+  sort: [-0.0047, 0.4352],
+  filter: [0.0397, 0.4635],
+  shuffle: [0.1438, 0.3626],
+  restart: [0.0377, 0.3335],
+  info: [0.1154, 0.358],
+  chevronLeft: [0.0037, 0.3608],
+  chevronRight: [-0.0009, 0.3547],
+  chevronDown: [0.0001, 0.3602],
+  chevronUp: [0.0001, 0.3587],
+  back: [-0.015, 0.3544],
+  forward: [0.0777, 0.3544],
+  close: [0.0001, 0.3574],
+  search: [0.0304, 0.3941],
+  settings: [0.1062, 0.359],
+  refresh: [0.0524, 0.3839],
+  server: [0.0837, 0.3585],
+  cloudOff: [0.193, 0.3546],
+  more: [0.0001, 0.3589],
+  moreHorizontal: [0.0359, 0.3592],
+  sidebar: [0.0545, 0.3539],
+  warning: [0.1589, 0.2319],
+  help: [0.1194, 0.3746],
+  link: [0.0849, 0.3606],
+  check: [0.0656, 0.333],
+  plus: [0.0001, 0.3574],
+  minus: [0.0001, 0.3574],
+  trailer: [0.1157, 0.3607],
+  qr: [0.0714, 0.3641],
+  key: [0.0951, 0.3875],
+  signOut: [0.0226, 0.3585],
+  noImage: [0.1007, 0.3472],
+  stack: [0.0751, 0.3516],
+  nextUp: [0.117, 0.3606],
+  monitor: [0.1681, 0.3849],
+  history: [0.1882, 0.3653],
+  tag: [0.0657, 0.4105],
+  eye: [0.1587, 0.3609],
+  eyeOff: [0.1517, 0.3922],
+  circle: [0.1149, 0.3609]
+}
+
+function optical(name) {
+  return OPTICAL[name] || null
+}
+
 function glyph(name) {
   var code = GLYPHS[name]
   if (code === undefined) return ""
