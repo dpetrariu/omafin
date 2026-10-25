@@ -96,7 +96,7 @@ def main():
     port = free_port()
     root = tempfile.mkdtemp(prefix="omafin-ui-")
     media = make_media(os.path.join(root, "media"))
-    mock = start_mock(port, media)
+    mock = start_mock(port, media, big=True)
     shots = os.environ.get("OMAFIN_UI_SHOTS") or os.path.join(root, "shots")
     os.makedirs(shots, exist_ok=True)
     h = None
@@ -118,7 +118,7 @@ def main():
         wait_for("the home rows", lambda: h.value("app.view() && app.view().home ? app.view().home.resume.length : 0") == 1, 15)
         time.sleep(1.5)
         h.shot("03-home")
-        assert h.value("app.sections.map(function(s) { return s.label })") == ["Home", "Movies", "TV Shows", "Collections", "Favourites"]
+        assert h.value("app.sections.map(function(s) { return s.label })") == ["Home", "Movies", "TV Shows", "Collections", "Archive", "Favourites"]
         assert h.value("app.view().home.nextUp[0].id") == S1E2
         print("ok: Quick Connect sign-in and home")
 
@@ -131,7 +131,13 @@ def main():
         y1 = h.value(page + ".flickable.contentY")
         bottom = h.value(page + ".flickable.contentHeight - " + page + ".flickable.height")
         notch = h.value(page + ".wheel.notch")
-        assert notch >= 200 and abs(y1 - min(y0 + notch, bottom)) < 1, (y0, y1, notch, bottom)
+        assert notch >= 380 and abs(y1 - min(y0 + notch, bottom)) < 1, (y0, y1, notch, bottom)
+        # Home refreshes itself; it stays where it was.
+        h.js("app.view().reload()")
+        wait_for("home reloaded", lambda: h.value("app.view().loading") is False, 10)
+        time.sleep(0.5)
+        assert abs(h.value(page + ".flickable.contentY") - y1) < 2, "home jumped after a refresh"
+        time.sleep(0.3)
         h.js(f"{page}.wheel.handle(0, 120, 0, 0, false, {row_y})")
         assert h.value(page + ".flickable.contentY") == y0
         print("ok: wheel scrolling")
@@ -207,7 +213,7 @@ def main():
         h.nav("go:Movies", 2)
         wait_for("the films", lambda: h.value("app.view().items.length") == 6, 10)
         assert h.value("app.view().items[0].name") == "Arrival"
-        h.js("(app.view().sort = 'added', app.view().descending = true, app.view().reload())")
+        h.js("(app.view().sort = 'added', app.view().descending = true, app.view().reload(true))")
         wait_for("newest first", lambda: h.value("app.view().items[0].name") == "Fargo", 5)
         h.js("(app.view().sort = 'name', app.view().descending = false, app.view().show = 'favorite', app.view().reload())")
         wait_for("favourites only", lambda: h.value("app.view().items.map(function(i) { return i.name })") == ["Casablanca"], 5)
@@ -221,6 +227,34 @@ def main():
         h.js("app.push({ kind: 'grid', title: 'Drama', genres: ['Drama'], types: 'Movie', recursive: true, sort: 'name' })")
         wait_for("genre choices", lambda: "Science Fiction" in h.value("app.view().genreChoices"), 10)
         assert h.value("app.view().items.map(function(i) { return i.name })") == ["Arrival", "Casablanca", "Fargo"]
+
+        # A long grid keeps its place when the next page loads, when a film
+        # is marked and when it reloads; a new sort starts at the top.
+        h.nav("go:Archive", 2)
+        wait_for("the first page", lambda: h.value("app.view().items.length") == 120, 10)
+        grid = "app.view().children.filter(function(c) { return c.cellWidth !== undefined })[0]"
+        h.js(f"{grid}.handleKey('pageDown'), {grid}.handleKey('pageDown'), {grid}.handleKey('pageDown')")
+        time.sleep(0.5)
+        gv = grid + ".children.filter(function(c) { return c.contentY !== undefined })[0]"
+        y = h.value(gv + ".contentY")
+        assert y > 500, y
+        h.js("app.view().loadMore()")
+        wait_for("the second page", lambda: h.value("app.view().items.length") == 240, 10)
+        time.sleep(0.4)
+        assert abs(h.value(gv + ".contentY") - y) < 2, "the grid jumped after loading more"
+        h.js("app.view().patch(app.view().items[3].id, { favorite: true })")
+        time.sleep(0.4)
+        assert abs(h.value(gv + ".contentY") - y) < 2, "the grid jumped after a mark"
+        h.js("app.view().reload()")
+        wait_for("reloaded at its size", lambda: h.value("app.view().loading") is False, 10)
+        time.sleep(0.4)
+        assert h.value("app.view().items.length") == 240 and abs(h.value(gv + ".contentY") - y) < 2, "the grid jumped after a reload"
+        h.js("(app.view().sort = 'added', app.view().descending = true, app.view().reload(true))")
+        wait_for("a new sort", lambda: h.value("app.view().items.length") == 120, 10)
+        time.sleep(0.4)
+        assert h.value(gv + ".contentY") <= 1, "a new sort did not start at the top"
+        h.js("(app.view().sort = 'name', app.view().descending = false, app.view().remember())")
+        print("ok: long grids keep their place")
 
         # Search.
         h.nav("search:blade", 2)

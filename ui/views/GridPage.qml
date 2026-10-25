@@ -71,11 +71,11 @@ Item {
     service.setPref(prefKey, { sort: sort, descending: descending, show: show })
   }
 
-  function query(start) {
+  function query(start, count) {
     var filters = (entry.filters || []).filter(function(f) { return f !== "played" && f !== "unplayed" && f !== "resumable" && f !== "favorite" })
     if (show !== "all") filters.push(show)
     if (entry.favorites) filters.push("favorite")
-    var q = { start: start, limit: 120, sort: sort, descending: descending, filters: filters, genres: genres }
+    var q = { start: start, limit: count || 120, sort: sort, descending: descending, filters: filters, genres: genres }
     if (entry.parentId) q.parentId = entry.parentId
     if (entry.personId) q.personId = entry.personId
     if (entry.types) q.types = entry.types
@@ -83,15 +83,18 @@ Item {
     return q
   }
 
-  function reload() {
+  // `fresh`: the sort or a filter changed, so load the first page only.
+  function reload(fresh) {
     generation++
     var mine = generation
     loading = true
-    service.call("items.list", query(0), function(result, error) {
+    // As many as were loaded, so a reload keeps the place you scrolled to.
+    service.call("items.list", query(0, fresh ? 120 : Math.min(500, Math.max(120, items.length))), function(result, error) {
       if (!root || mine !== root.generation) return
       root.loading = false
       root.error = error ? error.message : ""
       if (error) return
+      grid.toTop = fresh === true
       root.items = result.items
       root.total = result.total
       if (grid.currentIndex >= root.items.length) grid.currentIndex = 0
@@ -162,9 +165,9 @@ Item {
           root.sort = id
         }
         root.remember()
-        root.reload()
+        root.reload(true)
       })
-      onClear: { root.sort = "name"; root.descending = false; root.remember(); root.reload() }
+      onClear: { root.sort = "name"; root.descending = false; root.remember(); root.reload(true) }
     }
     FilterChip {
       id: showChip
@@ -175,8 +178,8 @@ Item {
       anchors.verticalCenter: parent.verticalCenter
       onChoose: root.showMenu(root.shows.map(function(s) {
         return { id: s.id, label: s.label, icon: s.id === root.show ? "check" : "" }
-      }), showChip, function(id) { root.show = id; root.remember(); root.reload() })
-      onClear: { root.show = "all"; root.remember(); root.reload() }
+      }), showChip, function(id) { root.show = id; root.remember(); root.reload(true) })
+      onClear: { root.show = "all"; root.remember(); root.reload(true) }
     }
     FilterChip {
       id: genreChip
@@ -193,9 +196,9 @@ Item {
         var at = next.indexOf(id)
         if (at >= 0) next.splice(at, 1); else next = [id]
         root.genres = next
-        root.reload()
+        root.reload(true)
       })
-      onClear: { root.genres = []; root.reload() }
+      onClear: { root.genres = []; root.reload(true) }
     }
   }
 

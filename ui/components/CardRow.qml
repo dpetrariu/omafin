@@ -24,6 +24,22 @@ Item {
   signal menuRequested(var item, Item anchor, real x, real y)
   signal actionClicked()
 
+  onItemsChanged: {
+    var x = list.contentX
+    list.model = items
+    list.contentX = x
+    keepX.x = x
+    keepX.restart()
+  }
+  Component.onCompleted: list.model = items
+  // The view lays out on its next frame; put the scroll back after it.
+  Timer {
+    id: keepX
+    property real x: 0
+    interval: 0
+    onTriggered: list.contentX = Math.max(-list.leftMargin, Math.min(x, list.contentWidth - list.width + list.rightMargin))
+  }
+
   readonly property var currentItem: items && currentIndex >= 0 && currentIndex < items.length ? items[currentIndex] : null
   function currentCard() { return list.itemAtIndex(currentIndex) }
   function scrollBy(dx) {
@@ -62,7 +78,9 @@ Item {
     leftMargin: root.theme.space(24)
     rightMargin: root.theme.space(24)
     clip: false
-    model: root.items
+    // Set by hand, keeping the scroll: new data for the same row must not
+    // throw it back to its first card.
+    model: []
     boundsBehavior: Flickable.StopAtBounds
     highlightFollowsCurrentItem: false
     cacheBuffer: root.cardWidth * 4

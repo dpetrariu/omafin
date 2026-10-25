@@ -61,8 +61,8 @@ def make_media(folder):
     return folder
 
 
-def start_mock(port, media=None):
-    args = [sys.executable, "-I", os.path.join(HERE, "mock_jellyfin.py"), str(port), "--seed"]
+def start_mock(port, media=None, big=False):
+    args = [sys.executable, "-I", os.path.join(HERE, "mock_jellyfin.py"), str(port), "--seed"] + (["--big"] if big else [])
     if media:
         args += ["--media", media]
     proc = subprocess.Popen(args)

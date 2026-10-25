@@ -572,10 +572,24 @@ class Handler(BaseHTTPRequestHandler):
         return self.send(200, data, ctype, {"Accept-Ranges": "bytes"})
 
 
+def seed_big():
+    """A library of 300 films, for paging and scrolling."""
+    vid = gid(4)
+    VIEWS["archive"] = vid
+    add({"Id": vid, "Name": "Archive", "Type": "CollectionFolder", "CollectionType": "movies", "IsFolder": True, "ChildCount": 300})
+    for n in range(300):
+        mid = gid(10000 + n)
+        add({"Id": mid, "Name": "Film %03d" % n, "SortName": "film %03d" % n, "Type": "Movie", "MediaType": "Video", "IsFolder": False,
+             "ParentId": vid, "ProductionYear": 1950 + n % 70, "RunTimeTicks": 60 * TICKS, "DateCreated": "2025-01-01T00:00:00.0000000Z",
+             "ImageTags": {"Primary": "f%d" % n}, "MediaSources": video_source(mid)})
+
+
 def main():
     port = int(sys.argv[1])
     if "--seed" in sys.argv:
         seed()
+    if "--big" in sys.argv:
+        seed_big()
     if "--media" in sys.argv:
         MEDIA["dir"] = sys.argv[sys.argv.index("--media") + 1]
     ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()

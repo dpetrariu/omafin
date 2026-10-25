@@ -30,6 +30,30 @@ Item {
   readonly property real cardHeight: Math.round(cardDrawWidth / (shape === "landscape" ? 16 / 9 : shape === "square" ? 1 : 2 / 3))
     + theme.small + theme.caption + theme.space(14)
 
+  // The same list grown or marked keeps its place; a different list (new
+  // sort, new filter) starts at the top.
+  property string firstId: ""
+  // Set by the page before a new list (a new sort or filter) arrives.
+  property bool toTop: false
+  onItemsChanged: {
+    var same = !toTop && items.length > 0 && items[0].id === firstId
+    toTop = false
+    firstId = items.length > 0 ? String(items[0].id) : ""
+    var y = same ? grid.contentY : grid.originY - grid.topMargin
+    grid.model = items
+    if (!same) currentIndex = 0
+    grid.contentY = y
+    keepY.y = y
+    keepY.restart()
+  }
+  Component.onCompleted: grid.model = items
+  Timer {
+    id: keepY
+    property real y: 0
+    interval: 0
+    onTriggered: if (root.items.length > 0) grid.contentY = Math.min(y, Math.max(grid.originY - grid.topMargin, grid.contentHeight + grid.originY - grid.height + grid.bottomMargin))
+  }
+
   function currentCard() {
     var cell = grid.itemAtIndex(currentIndex)
     return cell ? cell.children[0] : null
@@ -58,7 +82,7 @@ Item {
 
   WheelScroller {
     flickable: grid
-    notch: root.cardHeight * 0.8
+    notch: root.cardHeight + root.gap
   }
 
   GridView {
@@ -70,7 +94,9 @@ Item {
     bottomMargin: root.theme.space(24)
     cellWidth: root.cellWidth
     cellHeight: root.cardHeight + root.gap
-    model: root.items
+    // Set by hand, keeping the scroll: the next page of a library, or a
+    // mark, must not throw the grid back to the top.
+    model: []
     clip: true
     boundsBehavior: Flickable.StopAtBounds
     cacheBuffer: Math.max(0, root.cardHeight * 3)

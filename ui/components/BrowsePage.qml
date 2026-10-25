@@ -104,10 +104,16 @@ Item {
 
   onVisibleRowsChanged: if (visibleRows.length > 0 && rowIndex >= visibleRows.length) rowIndex = visibleRows.length - 1
 
+  function cursorFor(row) {
+    if (!row || !row.items) return 0
+    var kept = row.key !== undefined ? cursors[row.key] : undefined
+    return Math.max(0, Math.min(row.items.length - 1, kept !== undefined ? kept : (row.startIndex || 0)))
+  }
+
   WheelScroller {
     id: wheel
     flickable: flick
-    notch: root.theme.space(240)
+    notch: root.theme.space(400)
     property bool scrolling: false
     // A sideways swipe scrolls the row under the pointer.
     sideways: function(dx, y) {
@@ -144,12 +150,19 @@ Item {
       width: flick.width
       spacing: root.theme.space(22)
 
+      // A count, not the rows themselves: new data then updates each row in
+      // place, instead of rebuilding them all (which emptied the page for a
+      // moment and threw it back to the top).
       Repeater {
         id: repeater
-        model: root.visibleRows
+        model: root.visibleRows.length
         delegate: CardRow {
-          required property var modelData
+          id: rowDelegate
           required property int index
+          readonly property var modelData: root.visibleRows[index] || ({ items: [] })
+          readonly property string rowKey: modelData.key !== undefined ? String(modelData.key) : ""
+          // Another row now in this place (a season switched): its own cursor.
+          onRowKeyChanged: currentIndex = root.cursorFor(modelData)
           theme: root.theme
           service: root.service
           title: modelData.title || ""
@@ -159,10 +172,7 @@ Item {
           cardWidth: modelData.cardWidth || root.theme.space((modelData.shape || "poster") === "landscape" ? 280 : 150)
           episodeTitles: modelData.episodeTitles === true
           active: index === root.rowIndex
-          Component.onCompleted: {
-            var kept = modelData.key !== undefined ? root.cursors[modelData.key] : undefined
-            currentIndex = Math.min(modelData.items.length - 1, kept !== undefined ? kept : (modelData.startIndex || 0))
-          }
+          Component.onCompleted: currentIndex = root.cursorFor(modelData)
           onCurrentIndexChanged: if (modelData.key !== undefined) root.cursors[modelData.key] = currentIndex
           onOpened: function(item) { root.moved = true; root.rowIndex = index; root.opened(item, modelData) }
           onPlayed: function(item) { root.moved = true; root.rowIndex = index; root.played(item, modelData) }

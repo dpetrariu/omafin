@@ -38,12 +38,19 @@ MouseArea {
   }
 
   // One wheel event, by its parts, so the UI tests can send one too.
+  // Spinning the wheel quickly goes further each notch, up to three times.
+  property real speed: 1
+  property double lastWheel: 0
+
   function handle(angleX, angleY, pixelX, pixelY, shift, y) {
     // First, so a page turns off its keyboard glide before the move.
     scrolled()
+    var now = Date.now()
+    speed = now - lastWheel < 140 ? Math.min(3, speed * 1.35) : 1
+    lastWheel = now
     var touchpad = pixelX !== 0 || pixelY !== 0
-    var dx = touchpad ? pixelX : angleX / 120 * notch
-    var dy = touchpad ? pixelY * 1.5 : angleY / 120 * notch
+    var dx = touchpad ? pixelX * 2 : angleX / 120 * notch * speed
+    var dy = touchpad ? pixelY * 2.5 : angleY / 120 * notch * speed
     if (shift) {
       // Shift turns the wheel sideways, as in every browser.
       dx = dx !== 0 ? dx : dy
