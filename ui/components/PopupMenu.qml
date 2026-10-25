@@ -21,6 +21,11 @@ QQC.Popup {
   closePolicy: QQC.Popup.CloseOnEscape | QQC.Popup.CloseOnPressOutside
 
   readonly property real rowHeight: theme.space(28)
+  // As wide as its widest row (audio and subtitle names run long), but
+  // never wider than the window; longer labels are cut with an ellipsis.
+  property real widest: 0
+  onItemsChanged: widest = 0
+  readonly property real maxWidth: parent ? parent.width - theme.space(16) : theme.space(600)
   readonly property bool hasIcons: items.some(function(i) { return !!i.icon })
 
   // Open beside `item` at (x, y) in its coordinates, flipping and clamping so
@@ -77,7 +82,7 @@ QQC.Popup {
   }
 
   contentItem: FocusScope {
-    implicitWidth: Math.max(root.theme.space(200), column.implicitWidth)
+    implicitWidth: Math.min(root.maxWidth - root.padding * 2, Math.max(root.theme.space(200), root.widest))
     implicitHeight: column.implicitHeight
     focus: true
 
@@ -104,6 +109,8 @@ QQC.Popup {
           width: column.width
           implicitWidth: label.implicitWidth + shortcut.implicitWidth + root.theme.space(root.hasIcons ? 64 : 40)
           height: modelData.separator ? root.theme.space(9) : root.rowHeight
+          onImplicitWidthChanged: if (implicitWidth > root.widest) root.widest = implicitWidth
+          Component.onCompleted: if (implicitWidth > root.widest) root.widest = implicitWidth
 
           Rectangle {
             visible: rowItem.modelData.separator === true
@@ -137,6 +144,8 @@ QQC.Popup {
             id: label
             visible: !rowItem.modelData.separator
             x: root.theme.space(root.hasIcons ? 34 : 10)
+            width: Math.min(implicitWidth, parent.width - x - shortcut.width - root.theme.space(20))
+            elide: Text.ElideRight
             anchors.verticalCenter: parent.verticalCenter
             text: rowItem.modelData.label || ""
             textFormat: Text.PlainText

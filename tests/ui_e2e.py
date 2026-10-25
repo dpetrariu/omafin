@@ -162,6 +162,13 @@ def main():
         assert labels[:2] == ["Resume", "Play from the start"] and "Mark as watched" in labels and "Remove from Continue watching" in labels, labels
         h.shot("05-card-menu")
         h.nav("back")
+        # A menu is as wide as its longest row (audio track names run long).
+        long = "Surround 7.1 - English - Dolby TrueHD + Dolby Atmos - Default"
+        h.js(f"app.showMenu([{{ id: 'a', label: '{long}', icon: 'check' }}, {{ id: 'b', label: 'Off' }}], hooks.content, function() {{}}, 10, 10)")
+        time.sleep(0.6)
+        w = h.value("hooks.menu.width")
+        assert w >= h.value("hooks.menu.widest") and w > 400, (w, h.value("hooks.menu.widest"))
+        h.nav("back")
         print("ok: card menu")
 
         # A show's page: Play goes to the next episode, episodes and seasons are rows.
