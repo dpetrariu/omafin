@@ -24,36 +24,59 @@ Item {
   signal menuRequested(var item, Item anchor, real x, real y)
   signal actionClicked()
 
+  // A row rests at its start (left of 0, by its margin) until someone
+  // scrolls it; new cards then keep that, or the place it was scrolled to.
+  // Layout settles a frame or two after the cards arrive, so the place is
+  // put back again then.
+  property bool atStart: true
+  readonly property real start: -list.leftMargin
+
+  function keepPlace() {
+    var x = atStart ? start : list.contentX
+    list.contentX = x
+    keepX.x = x
+    keepX.restart()
+  }
   onItemsChanged: {
-    var x = list.contentX
+    var x = atStart ? start : list.contentX
     list.model = items
     list.contentX = x
     keepX.x = x
     keepX.restart()
   }
-  Component.onCompleted: list.model = items
-  // The view lays out on its next frame; put the scroll back after it.
+  Component.onCompleted: {
+    list.model = items
+    keepPlace()
+  }
+  onWidthChanged: if (atStart) keepPlace()
   Timer {
     id: keepX
     property real x: 0
     interval: 0
-    onTriggered: list.contentX = Math.max(-list.leftMargin, Math.min(x, list.contentWidth - list.width + list.rightMargin))
+    onTriggered: list.contentX = root.atStart ? root.start
+      : Math.max(root.start, Math.min(x, list.contentWidth - list.width + list.rightMargin))
   }
 
   readonly property var currentItem: items && currentIndex >= 0 && currentIndex < items.length ? items[currentIndex] : null
   function currentCard() { return list.itemAtIndex(currentIndex) }
+  // How far the row is scrolled from its beginning (0 when not scrolled).
+  readonly property real scrolledBy: list.contentX + list.leftMargin
   function scrollBy(dx) {
-    var start = -list.leftMargin
     var end = Math.max(start, list.contentWidth - list.width + list.rightMargin)
     list.cancelFlick()
     list.contentX = Math.max(start, Math.min(end, list.contentX + dx))
+    atStart = list.contentX <= start + 0.5
   }
 
   width: parent ? parent.width : 0
   implicitHeight: heading.height + list.height + theme.space(6)
 
-  onCurrentIndexChanged: if (active) list.positionViewAtIndex(currentIndex, ListView.Contain)
-  onActiveChanged: if (active) list.positionViewAtIndex(currentIndex, ListView.Contain)
+  function showCurrent() {
+    list.positionViewAtIndex(currentIndex, ListView.Contain)
+    atStart = list.contentX <= start + 0.5
+  }
+  onCurrentIndexChanged: if (active) showCurrent()
+  onActiveChanged: if (active) showCurrent()
 
   SectionTitle {
     id: heading
@@ -83,6 +106,8 @@ Item {
     model: []
     boundsBehavior: Flickable.StopAtBounds
     highlightFollowsCurrentItem: false
+    // A drag with the pointer leaves the row where it was dragged to.
+    onMovementEnded: root.atStart = contentX <= root.start + 0.5
     cacheBuffer: root.cardWidth * 4
     QQC.ScrollBar.horizontal: QQC.ScrollBar { policy: QQC.ScrollBar.AsNeeded }
 
@@ -119,7 +144,7 @@ Item {
     y: list.y + (root.cardHeight - height) / 2 - root.theme.space(20)
     icon: "chevronLeft"
     tooltip: "Scroll left"
-    onClicked: list.contentX = Math.max(-list.leftMargin, list.contentX - list.width * 0.6)
+    onClicked: root.scrollBy(-list.width * 0.6)
   }
   IconButton {
     theme: root.theme
@@ -129,7 +154,7 @@ Item {
     y: list.y + (root.cardHeight - height) / 2 - root.theme.space(20)
     icon: "chevronRight"
     tooltip: "Scroll right"
-    onClicked: list.contentX = Math.min(list.contentWidth - list.width + list.rightMargin, list.contentX + list.width * 0.6)
+    onClicked: root.scrollBy(list.width * 0.6)
   }
   HoverHandler { id: hover }
 }

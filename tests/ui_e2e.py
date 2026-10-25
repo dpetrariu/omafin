@@ -120,6 +120,8 @@ def main():
         h.shot("03-home")
         assert h.value("app.sections.map(function(s) { return s.label })") == ["Home", "Movies", "TV Shows", "Collections", "Archive", "Favourites"]
         assert h.value("app.view().home.nextUp[0].id") == S1E2
+        offsets = h.value("[0, 1, 2, 3].map(function(i) { var r = app.view().browse.rowItem(i); return r ? r.scrolledBy : 0 })")
+        assert all(abs(o) < 0.5 for o in offsets), ("a home row starts scrolled in", offsets)
         print("ok: Quick Connect sign-in and home")
 
         # One wheel notch glides the page a good step, even over a row of

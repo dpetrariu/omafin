@@ -38,6 +38,7 @@ Item {
   Glyph {
     id: glyph
     anchors.centerIn: parent
+    optical: true
     name: root.icon
     size: root.iconSize
     color: root.attention ? root.theme.accent : root.color
