@@ -31,7 +31,7 @@ QQC.Popup {
   // Open beside `item` at (x, y) in its coordinates, flipping and clamping so
   // it stays inside the window.
   function openAt(item, x, y) {
-    if (!item || !parent) return
+    if (!item || !parent || items.length === 0) return
     var p = item.mapToItem(parent, x, y)
     highlighted = -1
     open()

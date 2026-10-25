@@ -169,6 +169,9 @@ def main():
         w = h.value("hooks.menu.width")
         assert w >= h.value("hooks.menu.widest") and w > 400, (w, h.value("hooks.menu.widest"))
         h.nav("back")
+        h.js("app.showMenu([], hooks.content, function() {}, 10, 10)")
+        time.sleep(0.4)
+        assert h.value("hooks.menu.visible") is False, "an empty menu opened"
         print("ok: card menu")
 
         # A show's page: Play goes to the next episode, episodes and seasons are rows.
@@ -199,6 +202,11 @@ def main():
         time.sleep(1)
         h.shot("07-movies")
         print("ok: library grid, sorting and filters")
+
+        # A genre grid reached from a page offers every genre to switch to.
+        h.js("app.push({ kind: 'grid', title: 'Drama', genres: ['Drama'], types: 'Movie', recursive: true, sort: 'name' })")
+        wait_for("genre choices", lambda: "Science Fiction" in h.value("app.view().genreChoices"), 10)
+        assert h.value("app.view().items.map(function(i) { return i.name })") == ["Arrival", "Casablanca", "Fargo"]
 
         # Search.
         h.nav("search:blade", 2)

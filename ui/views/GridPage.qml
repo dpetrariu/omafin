@@ -58,9 +58,9 @@ Item {
 
   Component.onCompleted: {
     reload()
-    if (entry.parentId) {
-      service.call("genres.list", { parentId: entry.parentId }, function(r, e) { if (!root) return; if (!e) root.genreChoices = r })
-    }
+    // A library's own genres; a grid reached from a genre or a person
+    // offers every genre on the server.
+    service.call("genres.list", entry.parentId ? { parentId: entry.parentId } : {}, function(r, e) { if (!root) return; if (!e) root.genreChoices = r })
   }
   Connections {
     target: root.service
