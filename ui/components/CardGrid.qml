@@ -56,6 +56,11 @@ Item {
     return false
   }
 
+  WheelScroller {
+    flickable: grid
+    notch: root.cardHeight * 0.8
+  }
+
   GridView {
     id: grid
     anchors.fill: parent

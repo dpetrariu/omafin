@@ -98,7 +98,10 @@ Item {
     wrapMode: Text.Wrap
   }
 
+  WheelScroller { flickable: settingsFlick; notch: root.theme.space(200) }
+
   Flickable {
+    id: settingsFlick
     anchors.fill: parent
     contentHeight: column.implicitHeight + root.theme.space(48)
     clip: true

@@ -26,6 +26,7 @@ Item {
   readonly property bool headerActive: headerFocusable && rowIndex < 0
   property real topPadding: theme.space(16)
   property alias flickable: flick
+  property alias wheel: wheel
   readonly property var headerItem: headerLoader.item
 
   signal opened(var item, var row)
@@ -103,6 +104,24 @@ Item {
 
   onVisibleRowsChanged: if (visibleRows.length > 0 && rowIndex >= visibleRows.length) rowIndex = visibleRows.length - 1
 
+  WheelScroller {
+    id: wheel
+    flickable: flick
+    notch: root.theme.space(240)
+    property bool scrolling: false
+    // A sideways swipe scrolls the row under the pointer.
+    sideways: function(dx, y) {
+      for (var i = 0; i < repeater.count; i++) {
+        var row = repeater.itemAt(i)
+        if (!row) continue
+        var p = row.mapToItem(root, 0, 0)
+        if (y >= p.y && y < p.y + row.height) { row.scrollBy(dx); return }
+      }
+    }
+    onScrolled: { scrolling = true; settle.restart() }
+    Timer { id: settle; interval: 200; onTriggered: wheel.scrolling = false }
+  }
+
   Flickable {
     id: flick
     anchors.fill: parent
@@ -110,7 +129,8 @@ Item {
     clip: true
     boundsBehavior: Flickable.StopAtBounds
     QQC.ScrollBar.vertical: QQC.ScrollBar {}
-    Behavior on contentY { enabled: !flick.moving; NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+    // Keyboard moves glide; the wheel moves at once.
+    Behavior on contentY { enabled: !flick.moving && !wheel.scrolling; NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
 
     Loader {
       id: headerLoader

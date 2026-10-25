@@ -26,6 +26,12 @@ Item {
 
   readonly property var currentItem: items && currentIndex >= 0 && currentIndex < items.length ? items[currentIndex] : null
   function currentCard() { return list.itemAtIndex(currentIndex) }
+  function scrollBy(dx) {
+    var start = -list.leftMargin
+    var end = Math.max(start, list.contentWidth - list.width + list.rightMargin)
+    list.cancelFlick()
+    list.contentX = Math.max(start, Math.min(end, list.contentX + dx))
+  }
 
   width: parent ? parent.width : 0
   implicitHeight: heading.height + list.height + theme.space(6)
@@ -77,11 +83,9 @@ Item {
       onMenuRequested: function(anchor, x, y) { root.currentIndex = index; root.menuRequested(modelData, anchor, x, y) }
     }
 
-    // Vertical wheel turns move the row sideways when hovered with Shift.
-    WheelHandler {
-      acceptedModifiers: Qt.ShiftModifier
-      onWheel: function(event) { list.flick(event.angleDelta.y * 8, 0) }
-    }
+    // The page's WheelScroller handles the wheel; the row scrolls only
+    // sideways, by drag or a sideways swipe.
+    interactive: true
   }
 
   // The height of one card with its two lines.

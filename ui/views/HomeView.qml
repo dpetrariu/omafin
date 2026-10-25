@@ -13,6 +13,7 @@ Item {
   required property var service
 
   readonly property string kind: "browse"
+  readonly property alias browse: page
   readonly property bool typing: false
   property var home: null
   property bool loading: false

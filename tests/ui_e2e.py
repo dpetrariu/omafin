@@ -122,6 +122,20 @@ def main():
         assert h.value("app.view().home.nextUp[0].id") == S1E2
         print("ok: Quick Connect sign-in and home")
 
+        # One wheel notch moves the page a good step, even over a row of
+        # cards; Shift+wheel moves that row sideways instead.
+        page = "app.view().browse"
+        y0 = h.value(page + ".flickable.contentY")
+        row_y = h.value(page + ".rowItem(1).mapToItem(" + page + ", 0, 40).y")
+        h.js(f"{page}.wheel.handle(0, -120, 0, 0, false, {row_y})")
+        y1 = h.value(page + ".flickable.contentY")
+        bottom = h.value(page + ".flickable.contentHeight - " + page + ".flickable.height")
+        notch = h.value(page + ".wheel.notch")
+        assert notch >= 200 and abs(y1 - min(y0 + notch, bottom)) < 1, (y0, y1, notch, bottom)
+        h.js(f"{page}.wheel.handle(0, 120, 0, 0, false, {row_y})")
+        assert h.value(page + ".flickable.contentY") == y0
+        print("ok: wheel scrolling")
+
         # The keyboard: down to Continue watching, w marks it watched, Undo.
         h.nav("down")
         target = h.value("app.view().currentTarget()")
