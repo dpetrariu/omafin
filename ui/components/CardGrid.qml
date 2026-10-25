@@ -53,7 +53,10 @@ Item {
     id: keepY
     property real y: 0
     interval: 0
-    onTriggered: if (root.items.length > 0) grid.contentY = Math.min(y, Math.max(grid.originY - grid.topMargin, grid.contentHeight + grid.originY - grid.height + grid.bottomMargin))
+    // While a glide or the fingers move, the place to keep is where the
+    // scroller has the page now, not where it was a frame ago: putting it
+    // back there would look like an interruption and stop the glide.
+    onTriggered: if (root.items.length > 0) grid.contentY = Math.min(wheel.position(y), Math.max(grid.originY - grid.topMargin, grid.contentHeight + grid.originY - grid.height + grid.bottomMargin))
   }
 
   function currentCard() {
@@ -86,6 +89,7 @@ Item {
   WheelScroller {
     id: wheel
     flickable: grid
+    moreBelow: root.items.length < root.total
     notch: root.cardHeight + root.gap
   }
 
@@ -107,7 +111,9 @@ Item {
     header: root.header
     QQC.ScrollBar.vertical: QQC.ScrollBar {}
 
-    onContentYChanged: if (contentHeight > 0 && contentY + height > contentHeight - root.cardHeight * 3) root.needMore()
+    // Ask for more well before the end (two screens), so a fast glide finds
+    // the next page already there.
+    onContentYChanged: if (contentHeight > 0 && contentY + height > contentHeight - Math.max(root.cardHeight * 3, height * 2)) root.needMore()
 
     delegate: Item {
       required property var modelData

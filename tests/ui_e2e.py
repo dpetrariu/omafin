@@ -275,6 +275,41 @@ def main():
         h.js(f"({w}.handle(0, 0, 0, 0, false, 100, 1, 5000), " + ", ".join(f"{w}.handle(0, 0, 0, -60, false, 100, 2, {5000 + 16 * (i + 1)})" for i in range(6)) + f", {w}.handle(0, 0, 0, 0, false, 100, 3, 5400))")
         time.sleep(1.0)
         assert abs(h.value(gv + ".contentY") - start - followed) < 2, "a paused release coasted"
+        # A glide into the end of what is loaded keeps going while the next
+        # page arrives.
+        h.js("app.view().reload(true)")
+        wait_for("first page again", lambda: h.value("app.view().items.length") == 120, 10)
+        time.sleep(0.5)
+        h.js(f"{w}.scrollBy({gv}.contentHeight - {gv}.height - 2500)")
+        time.sleep(0.3)
+        assert h.value("app.view().items.length") == 120
+        h.js(f"({w}.handle(0, 0, 0, 0, false, 100, 1, 20000), " + ", ".join(f"{w}.handle(0, 0, 0, -110, false, 100, 2, {20000 + 16 * (i + 1)})" for i in range(6)) + f", {w}.handle(0, 0, 0, 0, false, 100, 3, 20100))")
+        wait_for("the next page while gliding", lambda: h.value("app.view().items.length") == 240, 5)
+        time.sleep(0.15)
+        assert h.value(w + ".coasting") is True, "loading the next page stopped the glide"
+        time.sleep(2.0)
+        # The ends stretch like a rubber band: a fast flick into the top
+        # carries a little past it and springs back; pulling past it with the
+        # fingers meets resistance and springs back on release.
+        h.js(f"{w}.scrollBy(-1000000)")
+        time.sleep(0.3)
+        top = h.value(gv + ".originY - " + gv + ".topMargin")
+        h.js(f"{w}.scrollBy(2000)")
+        time.sleep(0.3)
+        h.js(f"({w}.handle(0, 0, 0, 0, false, 100, 1, 30000), " + ", ".join(f"{w}.handle(0, 0, 0, 110, false, 100, 2, {30000 + 16 * (i + 1)})" for i in range(6)) + f", {w}.handle(0, 0, 0, 0, false, 100, 3, 30100))")
+        time.sleep(2.0)
+        peak = h.value(w + ".peakStretch")
+        assert 20 < peak < 160, peak
+        assert abs(h.value(gv + ".contentY") - top) < 0.5 and h.value(w + ".active") is False, "the bounce did not settle on the top"
+        h.js(f"({w}.handle(0, 0, 0, 0, false, 100, 1, 40000), " + ", ".join(f"{w}.handle(0, 0, 0, 80, false, 100, 2, {40000 + 50 * (i + 1)})" for i in range(5)) + ")")
+        time.sleep(0.3)
+        pulled = top - h.value(gv + ".contentY")
+        assert 20 < pulled < 5 * 80 * 1.25 * 0.6, pulled
+        h.js(f"{w}.handle(0, 0, 0, 0, false, 100, 3, 40400)")
+        time.sleep(1.2)
+        assert abs(h.value(gv + ".contentY") - top) < 0.5 and h.value(w + ".active") is False, "the pull did not spring back"
+        print("ok: rubber-band ends")
+
         # A key press catches a glide.
         h.js(f"({w}.handle(0, 0, 0, 0, false, 100, 1, 9000), " + ", ".join(f"{w}.handle(0, 0, 0, -80, false, 100, 2, {9000 + 16 * (i + 1)})" for i in range(6)) + f", {w}.handle(0, 0, 0, 0, false, 100, 3, 9100))")
         time.sleep(0.1)
