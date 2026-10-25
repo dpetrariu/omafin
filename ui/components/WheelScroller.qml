@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Window
 
 // Scrolling with momentum, as on a Mac, for a Flickable. Qt's own wheel
 // handling moves a few lines per event and stops dead, and a sideways row
@@ -34,6 +35,10 @@ MouseArea {
   readonly property bool active: fingersDown || coast.running
   property bool fingersDown: false
   property real velocity: 0          // px/s, positive scrolls down
+  // Where the page really is, to the fraction of a pixel; the Flickable is
+  // only ever put on whole screen pixels, so text does not shimmer against
+  // the posters as fractions come and go.
+  property real exact: 0
   property double lastEvent: 0
 
   // Before every wheel step, for a page that animates its keyboard moves.
@@ -50,14 +55,22 @@ MouseArea {
     return { top: top, bottom: Math.max(top, f.originY + f.contentHeight + f.bottomMargin - f.height) }
   }
 
+  function snap(y) {
+    var dpr = Screen.devicePixelRatio > 0 ? Screen.devicePixelRatio : 1
+    return Math.round(y * dpr) / dpr
+  }
+
   // Move by dy now; false when an edge stopped it.
   function moveBy(dy) {
     var f = flickable
     if (!f || dy === 0) return true
+    // Something else moved the page (a key, a new page of items): start from there.
+    if (Math.abs(f.contentY - snap(exact)) > 0.01) exact = f.contentY
     var b = bounds()
-    var next = Math.max(b.top, Math.min(b.bottom, f.contentY + dy))
-    var free = Math.abs(next - (f.contentY + dy)) < 0.5
-    f.contentY = next
+    var next = Math.max(b.top, Math.min(b.bottom, exact + dy))
+    var free = Math.abs(next - (exact + dy)) < 0.5
+    exact = next
+    f.contentY = snap(next)
     return free
   }
 
