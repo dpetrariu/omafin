@@ -231,6 +231,18 @@ def main():
         assert os.path.exists(one["path"]) and entry(b, fargo)["state"] == "done"
         print("ok: same-named films keep apart")
 
+        # A whole folder deleted in the file manager: the download just goes,
+        # noticed without anyone asking (the backend watches the folders).
+        shutil.rmtree(os.path.dirname(one["path"]))
+        b.events.clear()
+        deadline = time.time() + 6
+        while time.time() < deadline and not any(e.get("method") == "downloads.changed" and e["params"].get("removed") == fargo for e in b.events):
+            b.call("system.info")  # reads the events that have arrived
+            time.sleep(1)
+        assert any(e["params"].get("removed") == fargo for e in b.events if e.get("method") == "downloads.changed"), "the deleted folder was not noticed"
+        assert entry(b, fargo) is None
+        print("ok: a folder deleted in the file manager leaves Downloaded")
+
         print("downloads e2e: all passed")
     finally:
         b.stop()

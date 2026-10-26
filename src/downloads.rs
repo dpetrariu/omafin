@@ -73,6 +73,10 @@ pub struct Entry {
     /// Watched here while the server was out of reach, not told yet:
     /// { position, played, at } (seconds, bool, unix seconds).
     pub pending: Value,
+    /// The disk the download was saved on (st_dev). A folder that is gone
+    /// only counts as deleted while that disk is still there: an unplugged
+    /// drive makes its folders vanish too, and must not forget downloads.
+    pub device: u64,
     #[serde(skip)]
     pub speed: f64,
     #[serde(skip)]
@@ -100,6 +104,7 @@ impl Default for Entry {
             finished: 0,
             meta_saved: false,
             pending: Value::Null,
+            device: 0,
             speed: 0.0,
             retry_at: None,
             attempts: 0,
@@ -141,6 +146,11 @@ pub struct Downloads {
     entries: Mutex<Vec<Entry>>,
     index: PathBuf,
     wake: Notify,
+    /// Watches the download folders, so a deletion in the file manager is
+    /// noticed at once (inotify; nothing runs while nothing changes).
+    watcher: Mutex<Option<notify::RecommendedWatcher>>,
+    /// Pokes the watch to look again (after a download makes new folders).
+    rewatch: Mutex<Option<tokio::sync::mpsc::UnboundedSender<()>>>,
 }
 
 fn now() -> u64 {
@@ -163,8 +173,8 @@ impl Downloads {
             }
         }
         entries.retain(|e| valid_id(&e.id) && !e.folder.is_empty() && !e.file.is_empty());
-        let downloads = Arc::new(Self { entries: Mutex::new(entries), index, wake: Notify::new() });
-        downloads.check_files();
+        let downloads = Arc::new(Self { entries: Mutex::new(entries), index, wake: Notify::new(), watcher: Mutex::new(None), rewatch: Mutex::new(None) });
+        let _ = downloads.check_files();
         downloads.save();
         downloads
     }
@@ -187,27 +197,95 @@ impl Downloads {
         self.entries.lock().unwrap().iter().find(|e| e.id == id).cloned()
     }
 
-    /// Finished downloads whose file was deleted (or put back) outside Omafin.
-    /// Only a file that is certainly gone counts: an unreadable folder (an
-    /// unmounted drive) leaves the entry as it is.
-    pub fn check_files(&self) -> bool {
-        let mut changed = false;
-        for e in self.entries.lock().unwrap().iter_mut() {
-            let gone = matches!(e.video().try_exists(), Ok(false));
-            let here = matches!(e.video().try_exists(), Ok(true));
-            if e.state == State::Done && gone {
-                e.state = State::Missing;
-                changed = true;
-            } else if e.state == State::Missing && here {
-                e.state = State::Done;
-                changed = true;
+    /// Finished downloads changed outside Omafin, in the file manager:
+    /// - the video and its metadata both gone (the folder deleted): the
+    ///   download is forgotten, it simply leaves Downloaded;
+    /// - only the video gone: it stays, marked missing, to download again;
+    /// - its disk not there (an unplugged drive): marked unavailable, and
+    ///   back as it was when the drive returns. Nothing is forgotten then.
+    /// Only a path that is certainly gone counts (`try_exists() == Ok(false)`).
+    pub fn check_files(&self) -> Changes {
+        let mut changes = Changes::default();
+        let mut entries = self.entries.lock().unwrap();
+        for e in entries.iter_mut() {
+            if e.device == 0 {
+                // Downloads from before disks were recorded: learn it while the folder is here.
+                if let Some(dev) = Path::new(&e.folder).exists().then(|| device_of(Path::new(&e.folder))).flatten() {
+                    e.device = dev;
+                    changes.save = true;
+                }
+            }
+            if !matches!(e.state, State::Done | State::Missing) {
+                continue;
+            }
+            match e.video().try_exists() {
+                Ok(true) => {
+                    if e.state == State::Missing {
+                        e.state = State::Done;
+                        e.error.clear();
+                        changes.changed.push(e.clone());
+                    }
+                }
+                Ok(false) => {
+                    let disk_here = e.device != 0 && device_of(Path::new(&e.folder)) == Some(e.device);
+                    let meta_gone = matches!(Path::new(&e.meta).try_exists(), Ok(false));
+                    if disk_here && meta_gone {
+                        changes.forgotten.push(e.id.clone());
+                        continue;
+                    }
+                    let why = if disk_here { "The downloaded file was removed" } else { "The drive with this download is not connected" };
+                    if e.state != State::Missing || e.error != why {
+                        e.state = State::Missing;
+                        e.error = why.into();
+                        changes.changed.push(e.clone());
+                    }
+                }
+                Err(_) => {}
             }
         }
-        changed
+        if !changes.forgotten.is_empty() {
+            entries.retain(|e| !changes.forgotten.contains(&e.id));
+        }
+        changes.save |= !changes.changed.is_empty() || !changes.forgotten.is_empty();
+        changes
     }
 
     pub fn list(&self) -> Vec<Value> {
         self.entries.lock().unwrap().iter().map(Entry::to_json).collect()
+    }
+}
+
+#[derive(Default)]
+pub struct Changes {
+    pub changed: Vec<Entry>,
+    pub forgotten: Vec<String>,
+    pub save: bool,
+}
+
+/// The disk a path is on: its own, or its nearest existing parent's (for a
+/// path that is gone, the disk it would be on now).
+fn device_of(path: &Path) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt;
+    let mut probe = path;
+    loop {
+        if let Ok(meta) = std::fs::metadata(probe) {
+            return Some(meta.dev());
+        }
+        probe = probe.parent()?;
+    }
+}
+
+/// Look at the files, tell the window what changed outside Omafin.
+pub fn check_and_tell(app: &App) {
+    let changes = app.downloads.check_files();
+    if changes.save {
+        app.downloads.save();
+    }
+    for e in &changes.changed {
+        notify(app, e);
+    }
+    for id in &changes.forgotten {
+        notify_removed(app, id);
     }
 }
 
@@ -496,9 +574,7 @@ pub async fn sync_pending(app: &App) {
 /// The Downloaded library: films as they are, episodes gathered under their
 /// show, sorted and filtered like any library.
 pub async fn items(app: &App, params: &Value) -> Result<Value> {
-    if app.downloads.check_files() {
-        app.downloads.save();
-    }
+    check_and_tell(app);
     let entries = app.downloads.all();
     let mut cards: Vec<(Value, u64)> = Vec::new();
     let mut shows: HashMap<String, (Value, u64, usize, usize)> = HashMap::new();
@@ -565,9 +641,7 @@ pub async fn items(app: &App, params: &Value) -> Result<Value> {
 // ---------------------------------------------------------------- RPC
 
 pub async fn list(app: &App) -> Result<Value> {
-    if app.downloads.check_files() {
-        app.downloads.save();
-    }
+    check_and_tell(app);
     let root = root(app);
     Ok(json!({
         "root": root,
@@ -713,6 +787,7 @@ async fn add_one(app: &App, id: &str, source: Option<&str>, season_checked: u64)
         size,
         state: State::Queued,
         added: now(),
+        device: device_of(&folder).unwrap_or(0),
         ..Default::default()
     };
     app.downloads.entries.lock().unwrap().push(entry.clone());
@@ -873,7 +948,67 @@ pub fn move_to_trash(path: &Path) -> std::io::Result<PathBuf> {
 
 /// Runs for the life of the backend: takes the first queued download,
 /// downloads it, and waits for more.
+/// The download folder of an entry: the folder that holds Movies/ and Shows/.
+fn root_of(entry: &Entry) -> Option<PathBuf> {
+    let up = if entry.card["type"] == "Episode" { 3 } else { 2 };
+    Path::new(&entry.folder).ancestors().nth(up).map(Path::to_path_buf)
+}
+
+/// Watch every download folder in use (the current one, and older ones that
+/// still hold downloads) for files deleted or put back outside Omafin.
+pub fn rewatch(app: &Arc<App>, tx: &tokio::sync::mpsc::UnboundedSender<()>) {
+    let mut roots: Vec<PathBuf> = vec![root(app)];
+    for e in app.downloads.all() {
+        if let Some(r) = root_of(&e) {
+            if !roots.contains(&r) {
+                roots.push(r);
+            }
+        }
+    }
+    let tx = tx.clone();
+    let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        if let Ok(event) = res {
+            use notify::EventKind;
+            if matches!(event.kind, EventKind::Remove(_) | EventKind::Create(_) | EventKind::Modify(notify::event::ModifyKind::Name(_))) {
+                let _ = tx.send(());
+            }
+        }
+    });
+    let Ok(mut watcher) = watcher else { return };
+    use notify::Watcher;
+    for r in roots.iter().filter(|r| r.is_dir()) {
+        let _ = watcher.watch(r, notify::RecursiveMode::Recursive);
+    }
+    *app.downloads.watcher.lock().unwrap() = Some(watcher);
+}
+
 pub fn start(app: Arc<App>) {
+    // Notice files deleted (or put back) in the file manager while running:
+    // the watcher says something changed; a moment later (a folder deletion
+    // is many events) the files are looked at once. A slow look every ten
+    // minutes covers what inotify cannot see, like a drive plugged back in.
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+    rewatch(&app, &tx);
+    let watched = app.clone();
+    let rewatch_tx = tx.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                got = rx.recv() => {
+                    if got.is_none() { return; }
+                    tokio::time::sleep(Duration::from_millis(700)).await;
+                    while rx.try_recv().is_ok() {}
+                }
+                _ = tokio::time::sleep(Duration::from_secs(600)) => {}
+            }
+            let app = watched.clone();
+            let _ = tokio::task::spawn_blocking(move || check_and_tell(&app)).await;
+            // New folders (the first download, a new download folder) join the watch.
+            rewatch(&watched, &rewatch_tx);
+        }
+    });
+    let (nudge, app_for_add) = (tx, app.clone());
+    *app_for_add.downloads.rewatch.lock().unwrap() = Some(nudge);
     tokio::spawn(async move {
         loop {
             let next = {
@@ -929,6 +1064,7 @@ async fn run(app: &Arc<App>, id: &str) {
                 e.state = State::Done;
                 e.finished = now();
                 e.attempts = 0;
+                e.device = device_of(&e.video()).unwrap_or(e.device);
             }
             Outcome::Stopped => {}
             Outcome::Retry(why) => {
@@ -959,6 +1095,10 @@ async fn run(app: &Arc<App>, id: &str) {
     app.downloads.save();
     if let Some(entry) = updated {
         notify(app, &entry);
+    }
+    // A finished download made folders the watch should cover.
+    if let Some(tx) = app.downloads.rewatch.lock().unwrap().as_ref() {
+        let _ = tx.send(());
     }
 }
 
@@ -1263,6 +1403,57 @@ mod tests {
         assert_eq!(extension(Some(r#"attachment; filename="Gladiator II.2024.1080p.mkv""#), "mov,mp4"), "mkv");
         assert_eq!(extension(None, "mov,mp4,m4a"), "mov");
         assert_eq!(extension(None, "../etc"), "mkv");
+    }
+
+    fn done_entry(dir: &Path, id: &str, device: u64) -> Entry {
+        let folder = dir.join(format!("Film {id}"));
+        Entry {
+            id: format!("{id:0>32}"),
+            folder: folder.to_string_lossy().into(),
+            file: "film.mkv".into(),
+            meta: folder.join(".omafin").to_string_lossy().into(),
+            state: State::Done,
+            device,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn deleted_folders_are_forgotten_but_unplugged_drives_are_not() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = tempfile::tempdir().unwrap();
+        let here = std::fs::metadata(dir.path()).unwrap().dev();
+        // Whole folder deleted, on a disk that is here: forgotten.
+        let deleted = done_entry(dir.path(), "a", here);
+        // Only the video deleted, metadata kept: stays, marked missing.
+        let video_only = done_entry(dir.path(), "b", here);
+        std::fs::create_dir_all(&video_only.meta).unwrap();
+        // Folder gone because its drive is not there (another disk): kept.
+        let unplugged = done_entry(dir.path(), "c", here + 1);
+        // Still there: unchanged.
+        let fine = done_entry(dir.path(), "d", here);
+        std::fs::create_dir_all(&fine.meta).unwrap();
+        std::fs::write(fine.video(), b"x").unwrap();
+        let downloads = Downloads {
+            entries: Mutex::new(vec![deleted.clone(), video_only.clone(), unplugged.clone(), fine.clone()]),
+            index: dir.path().join("downloads.json"),
+            wake: Notify::new(),
+            watcher: Mutex::new(None),
+            rewatch: Mutex::new(None),
+        };
+        let changes = downloads.check_files();
+        assert_eq!(changes.forgotten, vec![deleted.id.clone()]);
+        assert!(downloads.get(&deleted.id).is_none());
+        let b = downloads.get(&video_only.id).unwrap();
+        assert_eq!((b.state, b.error.as_str()), (State::Missing, "The downloaded file was removed"));
+        let c = downloads.get(&unplugged.id).unwrap();
+        assert_eq!((c.state, c.error.as_str()), (State::Missing, "The drive with this download is not connected"));
+        assert_eq!(downloads.get(&fine.id).unwrap().state, State::Done);
+        // The video comes back: done again.
+        std::fs::create_dir_all(&video_only.folder).unwrap();
+        std::fs::write(video_only.video(), b"x").unwrap();
+        downloads.check_files();
+        assert_eq!(downloads.get(&video_only.id).unwrap().state, State::Done);
     }
 
     #[test]

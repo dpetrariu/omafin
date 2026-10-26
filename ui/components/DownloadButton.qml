@@ -111,7 +111,7 @@ Item {
       case "downloading": return "Downloading · " + Format.downloadLine(e) + " — click to pause or cancel"
       case "paused": return (e.error || "Paused") + " · " + Math.floor(root.progress * 100) + "% here — click to resume or cancel"
       case "failed": return e.error + " — click to try again or cancel"
-      case "missing": return "The downloaded file was removed — click to download it again or remove it"
+      case "missing": return (e.error || "The downloaded file was removed") + " — click to download it again or remove it"
       case "done": return "Delete download... (" + Format.bytes(e.size) + ")"
       }
       return ""

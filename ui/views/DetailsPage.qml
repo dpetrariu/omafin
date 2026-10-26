@@ -442,7 +442,7 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
           }
           Text {
-            text: !parent.dl ? "" : parent.dl.state === "missing" ? "The downloaded file was removed; this streams from the server"
+            text: !parent.dl ? "" : parent.dl.state === "missing" ? (parent.dl.error || "The downloaded file was removed") + "; this streams from the server"
               : "Downloaded · plays from this computer" + (root.details && root.details.offline ? " (the server is out of reach)" : "")
             textFormat: Text.PlainText
             color: root.theme.dim
