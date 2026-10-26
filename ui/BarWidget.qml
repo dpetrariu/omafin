@@ -4,7 +4,6 @@ import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
 import "components"
-import "lib/Icons.js" as Icons
 import "lib/Format.js" as Format
 
 // One icon and one click. A dot says mpv is playing something Omafin
@@ -55,11 +54,9 @@ BarWidget {
 
     iconComponent: Component {
       Item {
-        Text {
+        Mark {
           anchors.centerIn: parent
-          text: Icons.glyph("logo")
-          font.family: Style.font.family
-          font.pixelSize: Style.bar.iconFont
+          size: Style.bar.iconFont
           color: button.attention ? Commons.Color.urgent : root.foreground
         }
         Rectangle {

@@ -22,6 +22,11 @@ apps="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 mkdir -p "$apps"
 install -m 644 "$project_dir/setup/omafin.desktop" "$apps/omafin.desktop"
 
+# The launcher icon, by name, from the user icon theme.
+icons="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps"
+mkdir -p "$icons"
+install -m 644 "$project_dir/ui/assets/icon.svg" "$icons/omafin.svg"
+gtk-update-icon-cache -q -t "${icons%/scalable/apps}" 2>/dev/null || true
 update-desktop-database "$apps" 2>/dev/null || true
 omarchy-shell shell rescanPlugins
 # The rescan finishes in the background; wait until the shell knows the plugin.

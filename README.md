@@ -25,6 +25,8 @@ curl -fsSL https://raw.githubusercontent.com/dpetrariu/omafin/main/install.sh | 
 
 It downloads Omafin into `~/.local/share/omafin-plugin`, fetches the prebuilt backend for your machine (checked against the release checksums), or builds it if none fits, adds the plugin to Omarchy with its bar icon, and restarts the shell. `--build` always builds from source. From a checkout, run `./install.sh` instead.
 
+With Omarchy's plugin manager instead, `omarchy plugin add https://github.com/dpetrariu/omafin.git --enable` works too: the first time the window opens, Omafin downloads its backend by itself. The installer additionally adds the launcher entry and its icon.
+
 ### First start
 
 Click the film icon in the bar and enter your Jellyfin address (for example `http://192.168.1.10:8096`). If the server has **Quick Connect** on, Omafin shows a six-digit code: in Jellyfin on your phone or in a browser, open your profile → **Quick Connect** and enter it. Otherwise, sign in with your user name and password. The session is kept in your keyring; your password is not stored.
@@ -62,4 +64,8 @@ make install     # rebuild bin/omafin
 
 See `CLAUDE.md` for the working agreements and `docs/ARCHITECTURE.md` for how the pieces fit.
 
-Licence: GPL-3.0-or-later.
+## Credits and licence
+
+Omafin's layout and flow follow [Fladder](https://github.com/DonutWare/Fladder) (GPL-3.0), and its structure and interface principles follow [Omamail](https://github.com/huacnlee/omamail) (MIT). Omafin is licensed under the GNU General Public License v3.0 or later.
+
+The icon (`ui/assets/icon.svg`, and the mark in `ui/lib/Mark.js`) combines the `movie-open-outline` glyph from [Material Design Icons](https://pictogrammers.com/library/mdi/) (Apache-2.0) with the [Jellyfin logo](https://github.com/jellyfin/jellyfin-ux) (CC BY-SA 4.0, by the Jellyfin contributors); as an adaptation of the logo, the icon is shared under CC BY-SA 4.0. Not affiliated with Jellyfin.

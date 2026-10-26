@@ -685,11 +685,9 @@ Item {
         anchors.leftMargin: appTheme.space(16)
         anchors.verticalCenter: parent.verticalCenter
         spacing: appTheme.space(10)
-        Glyph {
-          name: "logo"
+        Mark {
           size: appTheme.heading + 4
           color: appTheme.accent
-          font.family: appTheme.font
           anchors.verticalCenter: parent.verticalCenter
         }
         Text {

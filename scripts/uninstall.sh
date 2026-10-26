@@ -22,6 +22,7 @@ if [[ -L "$link" ]]; then
   rm "$link"
 fi
 rm -f "$data/applications/omafin.desktop"
+rm -f "$data/icons/hicolor/scalable/apps/omafin.svg"
 update-desktop-database "$data/applications" 2>/dev/null || true
 command -v omarchy-shell >/dev/null && omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
 
