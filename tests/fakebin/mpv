@@ -30,6 +30,8 @@ for opt in (loaded[4] if len(loaded) > 4 else "").split(","):
     if opt.startswith("start="):
         start = float(opt[6:])
 send({"event": "file-loaded"})
+# A scope film, as mpv reports the shape it displays at.
+send({"event": "property-change", "id": 5, "name": "video-params", "data": {"w": 1920, "h": 804, "dw": 1920, "dh": 804}})
 send({"event": "playback-restart"})
 steps = int(os.environ.get("FAKE_MPV_STEPS", "4"))
 for i in range(steps):

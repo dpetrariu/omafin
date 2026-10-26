@@ -65,6 +65,7 @@ var BINDINGS = [
   { id: "fullscreenPlayer", keys: ["f"], contexts: ["player"], group: "Player", label: "Full screen" },
   { id: "playbackInfo", keys: ["i"], contexts: ["player"], group: "Player", label: "How it is playing" },
   { id: "continueInMpv", keys: ["Shift+M"], contexts: ["player"], group: "Player", label: "Continue in mpv" },
+  { id: "popOut", keys: ["o"], contexts: ["player"], group: "Player", label: "Pop out: mpv in a small window on top" },
   { id: "closePlayer", keys: ["q", "Backspace"], contexts: ["player"], group: "Player", label: "Stop and close the player" },
 
   // Going places

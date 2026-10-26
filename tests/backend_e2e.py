@@ -351,7 +351,9 @@ def main():
         # mpv: started with a socket, given the proxy URL (no token), reported for.
         b.stop()
         mpv_log = os.path.join(root, "mpv.log")
-        b = Backend(binary, home, {"PATH": os.path.join(HERE, "fakebin") + os.pathsep + os.environ["PATH"], "FAKE_MPV_LOG": mpv_log})
+        hypr_log = os.path.join(root, "hypr.log")
+        b = Backend(binary, home, {"PATH": os.path.join(HERE, "fakebin") + os.pathsep + os.environ["PATH"], "FAKE_MPV_LOG": mpv_log,
+                                   "FAKE_HYPR_LOG": hypr_log, "HYPRLAND_INSTANCE_SIGNATURE": "omafin-test"})
         assert b.call("system.info")["mpv"] is True
         handed = b.call("play.mpv", {"id": ARRIVAL, "start": 2, "subtitleIndex": 3, "audioIndex": 2})
         assert handed["url"] is None and handed["session"]
@@ -359,6 +361,8 @@ def main():
         lines = [json.loads(l) for l in open(mpv_log)]
         argv = lines[0]["argv"]
         assert not any("ApiKey" in a or "Token" in a for a in argv) and "--idle=once" in argv
+        assert not any(a.startswith(("--wayland-app-id=", "--title=")) for a in argv), argv
+        assert not os.path.exists(hypr_log) or open(hypr_log).read() == "", "a plain mpv's window is left alone"
         load = next(l["command"] for l in lines if "command" in l and l["command"][0] == "loadfile")
         assert load[1].startswith("http://127.0.0.1:") and "/jf/Videos/" + ARRIVAL + "/stream" in load[1] and "ApiKey" not in load[1]
         # Jellyfin stream 2 is the file's second audio track, 3 its first subtitle track.
@@ -368,6 +372,28 @@ def main():
         assert any(r["event"] == "Pause" for r in mine)
         wait_for("the playback event", lambda: any(e.get("method") == "playback.changed" and e["params"]["state"] == "stopped" for e in b.events) or b.call("play.status") is None, 5)
         print("ok: mpv handoff and its reports")
+
+        # Popped out (refused before anything is asked of the server or mpv
+        # starts when pip is not a bool): mpv's window gets an app id of its own and a
+        # Picture-in-Picture title, for Omarchy's PiP window rule.
+        b.refused("play.mpv", {"id": ARRIVAL, "pip": "yes"}, "pip")
+        open(mpv_log, "w").close()
+        open(hypr_log, "w").close()
+        popped = b.call("play.mpv", {"id": ARRIVAL, "pip": True})
+        wait_for("the popped-out mpv to finish", lambda: any(r["kind"] == "stop" and r["session"] == popped["session"] for r in state(port)["reports"]), 15)
+        argv = json.loads(open(mpv_log).readline())["argv"]
+        assert "--wayland-app-id=omafin-pip" in argv and "--title=Picture-in-Picture" in argv, argv
+        assert "--no-auto-window-resize" in argv, argv
+        assert not any("ApiKey" in a or "Token" in a for a in argv)
+        # Its own window (and no other) is floated, pinned and sized to the
+        # film's 1920×804 shape, 40 in from the corner under the 26-high bar.
+        dispatched = [json.loads(l)[0] for l in open(hypr_log)]
+        assert all('window = "address:0x5a5a"' in d for d in dispatched), dispatched
+        assert any(d.startswith("hl.dsp.window.float(") and 'action = "on"' in d for d in dispatched), dispatched
+        assert any(d.startswith("hl.dsp.window.pin(") for d in dispatched), dispatched
+        assert any(d.startswith("hl.dsp.window.resize(") and "x = 600, y = 251" in d for d in dispatched), dispatched
+        assert any(d.startswith("hl.dsp.window.move(") and "x = 2368, y = 66" in d for d in dispatched), dispatched
+        print("ok: pop out into a picture-in-picture mpv, shaped like the film")
 
         # An mpv still playing when the window starts something else is
         # stopped, and stopping never waits on it.

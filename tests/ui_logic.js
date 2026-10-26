@@ -166,6 +166,7 @@ test("the player answers the keys people expect", () => {
   assert.strictEqual(by("s"), "skipSegment")
   assert.strictEqual(by("Escape"), "back")
   assert.strictEqual(by("p"), undefined)
+  assert.strictEqual(by("o"), "popOut")
 })
 
 test("wire frames are checked before use", () => {

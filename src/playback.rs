@@ -630,6 +630,11 @@ pub async fn play_in_mpv(app: &Arc<App>, params: &Value) -> Result<Value> {
     if !mpv_available() {
         return Err(Error::invalid("mpv is not installed (sudo pacman -S mpv)"));
     }
+    let pip = match params.get("pip") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err(Error::invalid("pip is true or false")),
+    };
     let mut prepared = prepare(app, params, Player::Mpv).await?;
     // Replace an mpv that is still playing something else; its own task
     // reports and cleans up after it.
@@ -665,13 +670,28 @@ pub async fn play_in_mpv(app: &Arc<App>, params: &Value) -> Result<Value> {
     let session = prepared["session"].as_str().unwrap_or_default().to_string();
     let socket = mpv_socket(app, &session)?;
     let _ = std::fs::remove_file(&socket);
-    let child = tokio::process::Command::new("mpv")
+    let mut command = tokio::process::Command::new("mpv");
+    command
         .arg("--idle=once")
         .arg("--force-window=immediate")
         .arg("--keep-open=no")
         .arg(format!("--input-ipc-server={}", socket.display()))
         .arg(format!("--force-media-title={title}"))
-        .arg("--msg-level=all=warn")
+        .arg("--msg-level=all=warn");
+    if pip {
+        // Popped out: the title "Picture-in-Picture" brings Omarchy's PiP rule
+        // (floating, pinned, small, top right), and an app id of its own keeps
+        // the window out of Omarchy's centred floating rule for mpv. Hyprland
+        // matches a rule against the whole title, so nothing may follow it.
+        // The rule is only tried as the window maps, which mpv can beat, so
+        // `place_pip` also sets the window up once the picture's shape is
+        // known; mpv must not resize it again after that.
+        command
+            .arg("--wayland-app-id=omafin-pip")
+            .arg("--title=Picture-in-Picture")
+            .arg("--no-auto-window-resize");
+    }
+    let child = command
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -697,7 +717,7 @@ pub async fn play_in_mpv(app: &Arc<App>, params: &Value) -> Result<Value> {
     });
     let app = app.clone();
     let tracks = Tracks { audio: audio_map, subtitle: subtitle_map };
-    let job = MpvJob { socket, url, options: options.join(","), sub_url, session, tracks };
+    let job = MpvJob { socket, url, options: options.join(","), sub_url, session, tracks, pip };
     tokio::spawn(async move {
         drive_mpv(app, child, job, stop_rx).await;
     });
@@ -752,6 +772,7 @@ struct MpvJob {
     sub_url: Option<String>,
     session: String,
     tracks: Tracks,
+    pip: bool,
 }
 
 /// Run one mpv to its end, reporting for it. Whatever ends it (the person
@@ -816,6 +837,11 @@ async fn talk_to_mpv(app: &Arc<App>, child: &mut tokio::process::Child, job: &Mp
     ] {
         write.write_all(format!("{c}\n").as_bytes()).await?;
     }
+    let mut pip_pid = if job.pip { child.id() } else { None };
+    if pip_pid.is_some() {
+        let c = json!({ "command": ["observe_property", 5, "video-params"] });
+        write.write_all(format!("{c}\n").as_bytes()).await?;
+    }
     let mut pending_sub = job.sub_url.clone().filter(|s| option_safe(s));
     let mut lines = BufReader::new(read).lines();
     let mut ended_at_end = false;
@@ -859,6 +885,14 @@ async fn talk_to_mpv(app: &Arc<App>, child: &mut tokio::process::Child, job: &Mp
             Some("end-file") => {
                 ended_at_end = event["reason"] == "eof";
             }
+            Some("property-change") if event["name"] == "video-params" => {
+                let (w, h) = (event["data"]["dw"].as_f64().unwrap_or(0.0), event["data"]["dh"].as_f64().unwrap_or(0.0));
+                if w >= 1.0 && h >= 1.0 {
+                    if let Some(pid) = pip_pid.take() {
+                        tokio::spawn(place_pip(pid, w / h));
+                    }
+                }
+            }
             Some("property-change") => {
                 let due = {
                     let mut guard = app.playback.current.lock().await;
@@ -897,6 +931,80 @@ async fn talk_to_mpv(app: &Arc<App>, child: &mut tokio::process::Child, job: &Mp
         }
     }
     Ok(ended_at_end)
+}
+
+/// Size and position for a popped-out picture of the given aspect on a
+/// monitor (logical x, y, width, height) less its reserved edges (left, top,
+/// right, bottom): 600 wide like Omarchy's PiP rule, at most 450 tall, 40 in
+/// from the top-right corner of what the bar leaves free.
+fn pip_geometry(aspect: f64, monitor: [i64; 4], reserved: [i64; 4]) -> [i64; 4] {
+    let (mut w, mut h) = (600.0, 600.0 / aspect);
+    if h > 450.0 {
+        (w, h) = (450.0 * aspect, 450.0);
+    }
+    let (w, h) = (w.round() as i64, h.round() as i64);
+    let [mx, my, mw, _] = monitor;
+    [w, h, mx + mw - reserved[2] - 40 - w, my + reserved[1] + 40]
+}
+
+/// Popped out: float and pin mpv's own window (found by its pid, so no other
+/// window is ever touched) at the picture's shape in the top-right corner.
+/// Omarchy's PiP rule does this only when it matches as the window maps; when
+/// it does not, the window lands tiled and letterboxed. A no-op outside
+/// Hyprland.
+async fn place_pip(pid: u32, aspect: f64) {
+    if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_none() {
+        return;
+    }
+    let mut client = None;
+    for _ in 0..30 {
+        client = hypr_json("clients").await.and_then(|c| c.as_array()?.iter().find(|c| c["pid"].as_u64() == Some(pid as u64)).cloned());
+        if client.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let Some(client) = client else { return };
+    let address = client["address"].as_str().unwrap_or_default();
+    if !address.strip_prefix("0x").is_some_and(|h| !h.is_empty() && h.chars().all(|c| c.is_ascii_hexdigit())) {
+        return;
+    }
+    let Some(monitor) = hypr_json("monitors").await.and_then(|m| m.as_array()?.iter().find(|m| m["id"] == client["monitor"]).cloned()) else { return };
+    let scale = monitor["scale"].as_f64().filter(|s| *s > 0.0).unwrap_or(1.0);
+    let (mut pw, mut ph) = (monitor["width"].as_f64().unwrap_or(0.0), monitor["height"].as_f64().unwrap_or(0.0));
+    if monitor["transform"].as_i64().unwrap_or(0) % 2 == 1 {
+        (pw, ph) = (ph, pw);
+    }
+    let reserved: Vec<i64> = monitor["reserved"].as_array().map(|r| r.iter().filter_map(Value::as_i64).collect()).unwrap_or_default();
+    let reserved = if reserved.len() == 4 { [reserved[0], reserved[1], reserved[2], reserved[3]] } else { [0; 4] };
+    let logical = [monitor["x"].as_i64().unwrap_or(0), monitor["y"].as_i64().unwrap_or(0), (pw / scale) as i64, (ph / scale) as i64];
+    let [w, h, x, y] = pip_geometry(aspect, logical, reserved);
+    let window = format!("address:{address}");
+    if client["floating"] != true {
+        hypr_dispatch(format!("hl.dsp.window.float({{ action = \"on\", window = \"{window}\" }})")).await;
+    }
+    if client["pinned"] != true {
+        hypr_dispatch(format!("hl.dsp.window.pin({{ window = \"{window}\" }})")).await;
+    }
+    hypr_dispatch(format!("hl.dsp.window.set_prop({{ prop = \"keep_aspect_ratio\", value = \"1\", window = \"{window}\" }})")).await;
+    hypr_dispatch(format!("hl.dsp.window.resize({{ window = \"{window}\", x = {w}, y = {h} }})")).await;
+    hypr_dispatch(format!("hl.dsp.window.move({{ window = \"{window}\", x = {x}, y = {y} }})")).await;
+}
+
+async fn hypr_json(what: &str) -> Option<Value> {
+    let out = tokio::process::Command::new("hyprctl").arg("-j").arg(what).stdin(std::process::Stdio::null()).output().await.ok()?;
+    serde_json::from_slice(&out.stdout).ok()
+}
+
+async fn hypr_dispatch(lua: String) {
+    let _ = tokio::process::Command::new("hyprctl")
+        .arg("dispatch")
+        .arg(lua)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await;
 }
 
 /// The current session, for the window to ask after a restart.
@@ -975,6 +1083,15 @@ mod tests {
         assert_eq!(Tracks::jellyfin(&[1, 2], &json!(false)), None);
         assert_eq!(Tracks::jellyfin(&[1, 2], &json!(0)), None);
         assert_eq!(Tracks::jellyfin(&[1, 2], &json!(9)), None);
+    }
+
+    #[test]
+    fn shapes_and_places_the_pop_out() {
+        // A scope film on a 3008×1692 screen under a 26-high top bar.
+        assert_eq!(pip_geometry(2.39, [0, 0, 3008, 1692], [0, 26, 0, 0]), [600, 251, 2368, 66]);
+        assert_eq!(pip_geometry(16.0 / 9.0, [0, 0, 1920, 1080], [0; 4]), [600, 338, 1280, 40]);
+        // A bar on the right is kept clear; tall pictures stop at 450 high.
+        assert_eq!(pip_geometry(0.5625, [1920, 0, 1920, 1080], [0, 0, 30, 0]), [253, 450, 3517, 40]);
     }
 
     #[test]

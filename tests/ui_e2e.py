@@ -42,6 +42,7 @@ class Harness:
                         OMAFIN_UI=os.path.join(REPO, "ui"), OMAFIN_BIN=binary, OMAFIN_HOME=home,
                         # The desktop trash too: removing a download must never reach the real one.
                         XDG_DATA_HOME=os.path.join(root, "xdg"),
+                        FAKE_MPV_LOG=os.path.join(root, "mpv.log"),
                         PATH=os.path.join(HERE, "fakebin") + os.pathsep + os.environ["PATH"])
         self.log = open(os.path.join(root, "qs.log"), "w")
         self.proc = subprocess.Popen(["qs", "-p", self.shell], env=self.env, stdout=self.log, stderr=subprocess.STDOUT)
@@ -432,6 +433,20 @@ def main():
         h.js(f"app.playInMpv({{ id: '{BLADE}', type: 'Movie', mediaType: 'Video', name: 'Blade Runner', user: {{ position: 5 }} }}, {{}})")
         wait_for("mpv reports", lambda: len([r for r in reports(port, BLADE) if r["method"] == "DirectPlay" and r["kind"] == "stop"]) >= 2, 15)
         print("ok: play in mpv")
+
+        # Pop out (o in the player) carries on in a picture-in-picture mpv.
+        h.js(f"app.playItem({{ id: '{BLADE}', type: 'Movie', mediaType: 'Video', name: 'Blade Runner', user: {{}} }}, {{ restart: true }})")
+        wait_for("Blade Runner plays in the window", lambda: h.value("hooks.player.started") is True, 20)
+        h.shot("14-pop-out-button")
+        mpv_log = os.path.join(h.root, "mpv.log")
+        open(mpv_log, "w").close()
+        stops = len([r for r in reports(port, BLADE) if r["kind"] == "stop"])
+        h.key("popOut", 0.5)
+        wait_for("the window hands over", lambda: h.value("hooks.player.active") is False, 10)
+        wait_for("a popped-out mpv", lambda: any("--wayland-app-id=omafin-pip" in json.loads(l).get("argv", []) for l in open(mpv_log)), 10)
+        # One stop for the window's session, one when the fake mpv ends.
+        wait_for("mpv reports for it", lambda: len([r for r in reports(port, BLADE) if r["kind"] == "stop"]) >= stops + 2, 15)
+        print("ok: pop out")
 
         # Downloads: the button beside Play starts one, shows it coming, and
         # becomes a bin; deleting asks first and moves the file to the trash.

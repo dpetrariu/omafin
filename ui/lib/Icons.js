@@ -37,6 +37,7 @@ var GLYPHS = {
   chapters: 0xF0279,      // format-list-bulleted
   video: 0xF0BDC,         // video-outline
   external: 0xF03CC,      // open-in-new
+  pip: 0xF0E5A,           // picture-in-picture-top-right-outline
   person: 0xF0013,        // account-outline
   people: 0xF0B58,        // account-group-outline
   star: 0xF04CE,          // star
@@ -129,6 +130,7 @@ var OPTICAL = {
   chapters: [0.0926, 0.3584],
   video: [0.0874, 0.3655],
   external: [0.0816, 0.373],
+  pip: [0.1949, 0.3861],
   person: [0.0347, 0.2923],
   people: [0.2003, 0.2946],
   star: [0.116, 0.318],

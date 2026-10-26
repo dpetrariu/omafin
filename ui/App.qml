@@ -407,7 +407,8 @@ Item {
       params.start = o.restart ? 0 : target.user && !target.user.played && target.user.position ? target.user.position : 0
       if (o.audioIndex !== undefined && o.audioIndex !== null) params.audioIndex = o.audioIndex
       if (o.subtitleIndex !== undefined && o.subtitleIndex !== null) params.subtitleIndex = o.subtitleIndex
-      toast.show("Opening " + Format.cardTitle(target) + " in mpv…")
+      if (o.pip === true) params.pip = true
+      toast.show(o.pip === true ? "Popping out " + Format.cardTitle(target) + "…" : "Opening " + Format.cardTitle(target) + " in mpv…")
       root.service.call("play.mpv", params, function(r, e) {
         if (e) toast.show(e.message, { tone: "error" })
       })
@@ -552,6 +553,7 @@ Item {
       items.push({ id: "play", label: Format.playLabel(item), icon: "play", shortcut: "p" })
       if (progress) items.push({ id: "restart", label: "Play from the start", icon: "restart", shortcut: "P" })
       if (service.mpvAvailable) items.push({ id: "mpv", label: "Play in mpv", icon: "external", shortcut: "m" })
+      if (service.mpvAvailable) items.push({ id: "pip", label: "Play popped out", icon: "pip" })
     }
     if (!page || page.kind !== "details" || page.item.id !== item.id) items.push({ id: "open", label: "Open", icon: "info", shortcut: "enter" })
     if (item.type === "Episode" && item.seriesId) items.push({ id: "series", label: "Go to " + (item.seriesName || "the show"), icon: "shows" })
@@ -579,6 +581,7 @@ Item {
       case "play": root.playItem(item, { restart: false }); break
       case "restart": root.playItem(item, { restart: true }); break
       case "mpv": root.playInMpv(item, {}); break
+      case "pip": root.playInMpv(item, { pip: true }); break
       case "open": root.openItem(item); break
       case "series": root.openSeries(item.seriesId); break
       case "watched": root.toggleWatched(item); break

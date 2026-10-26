@@ -328,10 +328,21 @@ Item {
     load(info.item.id, at, options)
   }
 
-  function continueInMpv(subtitleOverride) {
+  // Popped out: mpv in a small window pinned above everything (Omarchy's
+  // picture-in-picture rule), carrying on from here.
+  function popOut() {
+    if (!service.mpvAvailable) {
+      toast("Popping out needs mpv (sudo pacman -S mpv)", "error")
+      return
+    }
+    continueInMpv(null, true)
+  }
+
+  function continueInMpv(subtitleOverride, pip) {
     if (!info) return
     var subs = subtitleOverride !== undefined && subtitleOverride !== null ? subtitleOverride : subtitleIndex
     var params = { id: info.item.id, start: position, audioIndex: audioIndex, subtitleIndex: subs }
+    if (pip === true) params.pip = true
     reportStop()
     player.pause()
     var at = position
@@ -346,7 +357,7 @@ Item {
         root.load(id, at, resume)
         return
       }
-      root.toast("Playing in mpv", "info")
+      root.toast(pip === true ? "Popped out" : "Playing in mpv", "info")
       root.close()
     })
   }
@@ -411,6 +422,7 @@ Item {
     case "fullscreenPlayer": fullscreenToggled(); return
     case "playbackInfo": showInfo = !showInfo; return
     case "continueInMpv": continueInMpv(); return
+    case "popOut": popOut(); return
     case "back":
       if (upNextShown) { upNextDismissed = true; return }
       close()
@@ -881,6 +893,15 @@ Item {
             tooltip: "Continue in mpv (Shift+M)"
             anchors.verticalCenter: parent.verticalCenter
             onClicked: root.continueInMpv()
+          }
+          IconButton {
+            visible: root.service.mpvAvailable
+            theme: root.theme
+            icon: "pip"
+            color: "white"
+            tooltip: "Pop out (o)"
+            anchors.verticalCenter: parent.verticalCenter
+            onClicked: root.popOut()
           }
           IconButton {
             theme: root.theme
