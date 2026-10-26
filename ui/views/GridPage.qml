@@ -56,16 +56,23 @@ Item {
     return id
   }
 
+  // Downloads are listed by the backend from what is on disk, and work offline.
+  readonly property string method: entry.downloaded ? "downloads.items" : "items.list"
+
   Component.onCompleted: {
     reload()
     // A library's own genres; a grid reached from a genre or a person
-    // offers every genre on the server.
-    service.call("genres.list", entry.parentId ? { parentId: entry.parentId } : {}, function(r, e) { if (!root) return; if (!e) root.genreChoices = r })
+    // offers every genre on the server. Downloads have none to filter by.
+    if (!entry.downloaded)
+      service.call("genres.list", entry.parentId ? { parentId: entry.parentId } : {}, function(r, e) { if (!root) return; if (!e) root.genreChoices = r })
   }
   Connections {
     target: root.service
     function onLibraryRevisionChanged() { root.reload() }
+    // The Downloaded grid follows downloads as they arrive, finish or go.
+    function onDownloadsChanged() { if (root.entry.downloaded) downloadsSettled.restart() }
   }
+  Timer { id: downloadsSettled; interval: 800; onTriggered: root.reload() }
 
   function remember() {
     service.setPref(prefKey, { sort: sort, descending: descending, show: show })
@@ -89,7 +96,7 @@ Item {
     var mine = generation
     loading = true
     // As many as were loaded, so a reload keeps the place you scrolled to.
-    service.call("items.list", query(0, fresh ? 120 : Math.min(500, Math.max(120, items.length))), function(result, error) {
+    service.call(method, query(0, fresh ? 120 : Math.min(500, Math.max(120, items.length))), function(result, error) {
       if (!root || mine !== root.generation) return
       root.loading = false
       root.error = error ? error.message : ""
@@ -105,7 +112,7 @@ Item {
     if (loading || items.length >= total) return
     var mine = generation
     loading = true
-    service.call("items.list", query(items.length), function(result, error) {
+    service.call(method, query(items.length), function(result, error) {
       if (!root || mine !== root.generation) return
       root.loading = false
       if (error) { root.error = error.message; return }
@@ -225,7 +232,8 @@ Item {
     width: Math.min(parent.width - root.theme.space(48), root.theme.space(420))
     horizontalAlignment: Text.AlignHCenter
     wrapMode: Text.Wrap
-    text: root.error || (root.show !== "all" || root.genres.length > 0 ? "Nothing matches these filters." : "Nothing here yet.")
+    text: root.error || (root.show !== "all" || root.genres.length > 0 ? "Nothing matches these filters."
+      : root.entry.downloaded ? "Nothing downloaded yet. The ⬇ button beside Play on a film or episode downloads it." : "Nothing here yet.")
     textFormat: Text.PlainText
     color: root.error ? root.theme.urgent : root.theme.dim
     font.family: root.theme.font

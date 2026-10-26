@@ -429,6 +429,29 @@ Item {
           }
         }
 
+        // Downloaded: it plays from this computer, server or not.
+        Row {
+          readonly property var dl: root.shown ? root.service.downloadOf(root.shown.id) : null
+          visible: !!dl && (dl.state === "done" || dl.state === "missing")
+          spacing: root.theme.space(6)
+          Glyph {
+            name: parent.dl && parent.dl.state === "missing" ? "error" : "downloaded"
+            size: root.theme.small + 1
+            color: parent.dl && parent.dl.state === "missing" ? root.theme.urgent : root.theme.accent
+            font.family: root.theme.font
+            anchors.verticalCenter: parent.verticalCenter
+          }
+          Text {
+            text: !parent.dl ? "" : parent.dl.state === "missing" ? "The downloaded file was removed; this streams from the server"
+              : "Downloaded · plays from this computer" + (root.details && root.details.offline ? " (the server is out of reach)" : "")
+            textFormat: Text.PlainText
+            color: root.theme.dim
+            font.family: root.theme.font
+            font.pixelSize: root.theme.caption
+            anchors.verticalCenter: parent.verticalCenter
+          }
+        }
+
         // What will play: the tracks, chosen before it starts.
         Row {
           visible: root.audioStreams.length > 0 || root.subtitleStreams.length > 0

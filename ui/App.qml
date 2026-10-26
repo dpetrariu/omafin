@@ -106,6 +106,8 @@ Item {
         count: v.childCount ? Format.thousands(v.childCount) : "", view: v })
     }
     out.push({ id: "favorites", label: "Favourites", icon: "favorite", group: "mine" })
+    if (service && service.downloadList.length > 0)
+      out.push({ id: "downloaded", label: "Downloaded", icon: "downloaded", group: "mine", count: service.downloadsDone > 0 ? String(service.downloadsDone) : "" })
     return out
   }
 
@@ -133,6 +135,7 @@ Item {
   // The grid a library opens to: shows in a TV library, films in a film one.
   function sectionEntry(id) {
     if (id === "favorites") return { kind: "grid", key: "favorites", title: "Favourites", favorites: true, types: "Movie,Series,Episode", recursive: true, sort: "name" }
+    if (id === "downloaded") return { kind: "grid", key: "downloaded", title: "Downloaded", downloaded: true, sort: "added", descending: true }
     var v = viewFor(id)
     if (!v) return null
     var types = Format.viewTypes(v.collectionType)
@@ -146,7 +149,7 @@ Item {
       remember()
       return
     }
-    if (id !== "home" && id !== "favorites" && !viewFor(id)) {
+    if (id !== "home" && id !== "favorites" && id !== "downloaded" && !viewFor(id)) {
       // A library by name, for `navigate go:Movies`.
       var byName = sections.filter(function(s) { return s.label.toLowerCase() === String(id).toLowerCase() })[0]
       if (!byName) return

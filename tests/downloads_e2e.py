@@ -15,7 +15,7 @@ import time
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from backend_e2e import ARRIVAL, BLADE, HOMELAND, Backend, free_port, start_mock, state, wait_for  # noqa: E402
+from backend_e2e import ARRIVAL, BLADE, HOMELAND, Backend, fetch, free_port, start_mock, state, wait_for  # noqa: E402
 import mock_jellyfin  # noqa: E402
 
 CASABLANCA = "a0000000000000000000000000000066"
@@ -165,6 +165,54 @@ def main():
         series_meta = os.path.join(videos, "Shows", "Homeland", ".omafin", "series")
         assert json.load(open(os.path.join(series_meta, "item.json")))["Name"] == "Homeland"
         assert b.call("downloads.addSeason", {"seriesId": HOMELAND, "seasonId": SEASON1}) == {"added": 0, "skipped": 3}
+        # Downloads play from their files, and work with the server out of reach.
+        base = b.call("system.info")["mediaBase"]
+        local = b.call("play.prepare", {"id": CASABLANCA})
+        assert local["local"] is True and local["url"] == f"/local/{CASABLANCA}/file" and local["method"] == "DirectPlay", local
+        status, _, body = fetch(base, local["url"], {"Range": "bytes=0-99"})
+        assert status == 206 and body == expected(CASABLANCA)[:100]
+        arrival = b.call("play.prepare", {"id": ARRIVAL, "subtitleIndex": 3})
+        sub = [x for x in arrival["subtitles"] if x["index"] == 3][0]
+        assert sub["url"] == f"/local/{ARRIVAL}/sub/3" and fetch(base, sub["url"])[2].startswith(b"WEBVTT")
+        picture = b.call("play.prepare", {"id": ARRIVAL, "subtitleIndex": 4})
+        assert picture["subtitleIndex"] is None and picture["needsMpv"] == 4, picture
+        assert fetch(base, f"/local/{HOMELAND}/file")[0] == 404, "a show has no file"
+        assert fetch(base, f"/local/{EDGE}/file")[0] == 404, "only downloads are served"
+
+        b.call("settings.update", {"patch": {"serverUrl": "http://127.0.0.1:9"}})
+        film = b.call("item.get", {"id": CASABLANCA})
+        assert film["name"] == "Casablanca" and film["offline"] is True and film["sources"], film.get("name")
+        status, headers, image = fetch(base, f"/img/{CASABLANCA}/Backdrop?tag=b2&w=800")
+        assert status == 200 and len(image) > 0, "a saved picture did not stand in"
+        b.refused("item.get", {"id": EDGE}, "")
+        show = b.call("item.get", {"id": HOMELAND})
+        assert show["offline"] is True and show["nextUp"]["index"] == 2, show.get("nextUp")
+        seasons = b.call("show.seasons", {"id": HOMELAND})
+        assert [x["name"] for x in seasons] == ["Season 1"] and seasons[0]["user"]["unplayed"] == 2, seasons
+        assert [e["index"] for e in b.call("show.episodes", {"id": HOMELAND, "seasonId": SEASON1})] == [1, 2, 3]
+        assert b.call("show.nextEpisode", {"id": "a00000000000000000000000000000d4", "seriesId": HOMELAND})["index"] == 3
+        assert b.call("item.similar", {"id": CASABLANCA}) == []
+        listed = b.call("downloads.items", {"sort": "name"})
+        names = [c["name"] for c in listed["items"]]
+        assert names == ["Arrival", "Casablanca", "Dune", "Homeland"], names
+        assert [c for c in listed["items"] if c["type"] == "Series"][0]["childCount"] == 3
+        assert [c["name"] for c in b.call("downloads.items", {"sort": "name", "filters": ["unplayed"]})["items"]] == ["Arrival", "Casablanca", "Homeland"]  # Dune is watched
+        offline_play = b.call("play.prepare", {"id": CASABLANCA, "start": 0})
+        assert offline_play["local"] is True
+        sess = offline_play["session"]
+        assert b.call("play.report", {"session": sess, "event": "start", "position": 0})["kept"] is True
+        stopped = b.call("play.report", {"session": sess, "event": "stop", "position": 30})
+        assert stopped == {"reported": False, "kept": True}, stopped
+        assert entry(b, CASABLANCA)["card"]["user"]["position"] == 30
+        assert state(port)["positions"].get(CASABLANCA) is None
+        print("ok: downloads play from their files and show offline")
+
+        # Back online: what was watched offline reaches the server.
+        b.call("settings.update", {"patch": {"serverUrl": url}})
+        b.call("server.overview")
+        assert state(port)["positions"].get(CASABLANCA) == 30, state(port)["positions"]
+        print("ok: offline viewing is sent when the server is back")
+
         b.call("downloads.remove", {"id": "a00000000000000000000000000000d3"})
         assert not os.path.exists(os.path.join(season, "S01E01 - Episode 1.mp4")) and os.path.exists(series_meta)
         for ep in ("a00000000000000000000000000000d4", "a00000000000000000000000000000d5"):

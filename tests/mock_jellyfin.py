@@ -75,7 +75,10 @@ DOWNLOAD_SIZE = 3_000_000
 
 
 def payload(item_id):
-    """The bytes of an item's file: deterministic, and different per version."""
+    """The bytes of an item's file: deterministic, and different per version.
+    With --media, the real test video (so a downloaded file plays)."""
+    if MEDIA["dir"] and os.path.exists(os.path.join(MEDIA["dir"], "test.mp4")):
+        return open(os.path.join(MEDIA["dir"], "test.mp4"), "rb").read() + b"\0" * STATE["versions"].get(item_id, 0)
     seed = (item_id + ":" + str(STATE["versions"].get(item_id, 0))).encode()
     block = b"".join(zlib.crc32(seed + bytes([i])).to_bytes(4, "big") for i in range(256))
     return (block * (DOWNLOAD_SIZE // len(block) + 1))[:DOWNLOAD_SIZE]
@@ -454,12 +457,17 @@ class Handler(BaseHTTPRequestHandler):
                     data["IsFavorite"] = on
             return self.send(200, with_user(item)["UserData"])
         m = re.match(r"^/UserItems/([0-9a-f]{32})/UserData$", path)
-        if m and method == "POST":
+        if m and method in ("GET", "POST"):
             data = STATE["user"].get(m.group(1))
             if data is None:
                 return self.send(404, "")
-            if "PlaybackPositionTicks" in body:
-                data["PlaybackPositionTicks"] = int(body["PlaybackPositionTicks"])
+            if method == "POST":
+                if "PlaybackPositionTicks" in body:
+                    data["PlaybackPositionTicks"] = int(body["PlaybackPositionTicks"])
+                if "Played" in body:
+                    data["Played"] = bool(body["Played"])
+                if body.get("LastPlayedDate"):
+                    data["LastPlayedDate"] = body["LastPlayedDate"]
             return self.send(200, with_user(STATE["items"][m.group(1)])["UserData"])
 
         m = re.match(r"^/Items/([0-9a-f]{32})/PlaybackInfo$", path)
@@ -672,13 +680,17 @@ def seed_big():
 
 
 def main():
+    global DOWNLOAD_SIZE
     port = int(sys.argv[1])
+    if "--media" in sys.argv:
+        MEDIA["dir"] = sys.argv[sys.argv.index("--media") + 1]
+        video = os.path.join(MEDIA["dir"], "test.mp4")
+        if os.path.exists(video):
+            DOWNLOAD_SIZE = os.path.getsize(video)
     if "--seed" in sys.argv:
         seed()
     if "--big" in sys.argv:
         seed_big()
-    if "--media" in sys.argv:
-        MEDIA["dir"] = sys.argv[sys.argv.index("--media") + 1]
     ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
 
 

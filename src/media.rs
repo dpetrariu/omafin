@@ -25,6 +25,9 @@ pub struct Media {
     cache_dir: PathBuf,
     jellyfin: Arc<Jellyfin>,
     fetches: Semaphore,
+    /// Downloads, for their files and for pictures when the server is out
+    /// of reach. Set once the downloads list has loaded.
+    pub downloads: std::sync::OnceLock<Arc<crate::downloads::Downloads>>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -34,6 +37,8 @@ enum Route {
     /// A path on the server under /Videos/{id}/: the file, HLS playlists and
     /// segments, subtitles and trickplay tiles.
     Server { path: String, cache: bool },
+    /// A downloaded title's file, or one of its saved subtitle tracks.
+    Local { id: String, sub: Option<i64> },
 }
 
 impl Media {
@@ -49,6 +54,7 @@ impl Media {
             cache_dir,
             jellyfin,
             fetches: Semaphore::new(12),
+            downloads: std::sync::OnceLock::new(),
         });
         let server = media.clone();
         tokio::spawn(async move {
@@ -113,7 +119,22 @@ impl Media {
             Route::Image { id, kind, tag, width } => {
                 let upstream = format!("/Items/{id}/Images/{kind}?tag={tag}&fillWidth={width}&quality=90");
                 let file = self.cache_path("image", &id, &format!("{kind}-{width}-{tag}"));
-                self.serve_cached(&mut stream, &upstream, &file, head_only).await
+                // A download saved its pictures: they stand in when the server cannot.
+                let saved = self.downloads.get().and_then(|d| d.local_image(&id, kind));
+                self.serve_cached_or(&mut stream, &upstream, &file, saved, head_only).await
+            }
+            Route::Local { id, sub } => {
+                let Some(downloads) = self.downloads.get() else {
+                    return respond_status(&mut stream, 404, "Not Found").await;
+                };
+                let found = match sub {
+                    None => downloads.playable(&id).map(|e| (e.video(), mime_for(&e.file))),
+                    Some(index) => downloads.subtitle_file(&id, index).map(|p| (p, "text/vtt")),
+                };
+                match found {
+                    Some((path, mime)) => serve_file(&mut stream, &path, mime, range, head_only).await,
+                    None => respond_status(&mut stream, 404, "Not Found").await,
+                }
             }
             Route::Server { path, cache: true } => {
                 let digest = hex::encode(&sha1_bytes(path.as_bytes())[..12]);
@@ -134,6 +155,10 @@ impl Media {
     }
 
     async fn serve_cached(&self, stream: &mut TcpStream, upstream: &str, file: &Path, head_only: bool) -> std::io::Result<()> {
+        self.serve_cached_or(stream, upstream, file, None, head_only).await
+    }
+
+    async fn serve_cached_or(&self, stream: &mut TcpStream, upstream: &str, file: &Path, saved: Option<PathBuf>, head_only: bool) -> std::io::Result<()> {
         if let Ok(bytes) = tokio::fs::read(file).await {
             touch(file);
             return respond_bytes(stream, &bytes, head_only).await;
@@ -148,6 +173,9 @@ impl Media {
             Ok(response) => response,
             Err(err) => {
                 drop(permit);
+                if let Some(bytes) = saved.and_then(|p| std::fs::read(p).ok()) {
+                    return respond_bytes(stream, &bytes, head_only).await;
+                }
                 let code = if err.code == crate::error::NOT_FOUND { 404 } else { 502 };
                 return respond_status(stream, code, "Upstream").await;
             }
@@ -344,6 +372,22 @@ fn parse_target(target: &str, token: &str) -> Option<Route> {
                 .unwrap_or(3840);
             Some(Route::Image { id, kind: image, tag, width })
         }
+        "local" => {
+            let mut segments = rest.split('/');
+            let id = segments.next()?.to_string();
+            if !valid_id(&id) {
+                return None;
+            }
+            let route = match (segments.next()?, segments.next()) {
+                ("file", None) => Route::Local { id, sub: None },
+                ("sub", Some(n)) => Route::Local { id, sub: Some(n.parse::<i64>().ok().filter(|n| *n >= 0 && *n < 1000)?) },
+                _ => return None,
+            };
+            if segments.next().is_some() {
+                return None;
+            }
+            Some(route)
+        }
         "jf" => {
             let mut segments = rest.split('/');
             let root = segments.next()?;
@@ -376,6 +420,67 @@ fn parse_target(target: &str, token: &str) -> Option<Route> {
         }
         _ => None,
     }
+}
+
+fn mime_for(file: &str) -> &'static str {
+    match file.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str() {
+        "mkv" => "video/x-matroska",
+        "mp4" | "m4v" | "mov" => "video/mp4",
+        "webm" => "video/webm",
+        "avi" => "video/x-msvideo",
+        "ts" | "m2ts" => "video/mp2t",
+        _ => "application/octet-stream",
+    }
+}
+
+/// A file from disk, with Range, so players can seek in a downloaded film.
+async fn serve_file(stream: &mut TcpStream, path: &Path, mime: &str, range: Option<String>, head_only: bool) -> std::io::Result<()> {
+    use tokio::io::AsyncSeekExt;
+    let mut file = match tokio::fs::File::open(path).await {
+        Ok(f) => f,
+        Err(_) => return respond_status(stream, 404, "Not Found").await,
+    };
+    let len = file.metadata().await?.len();
+    let (start, end) = match range.as_deref().and_then(|r| r.strip_prefix("bytes=")).and_then(|r| r.split_once('-')) {
+        Some((a, b)) => {
+            let start = a.trim().parse::<u64>().unwrap_or(0);
+            let end = b.trim().parse::<u64>().ok().map(|e| e.min(len.saturating_sub(1))).unwrap_or(len.saturating_sub(1));
+            if start >= len || start > end {
+                let head = format!("HTTP/1.1 416 Range Not Satisfiable\r\ncontent-range: bytes */{len}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
+                stream.write_all(head.as_bytes()).await?;
+                return stream.shutdown().await;
+            }
+            (start, end)
+        }
+        None => (0, len.saturating_sub(1)),
+    };
+    let partial = range.is_some();
+    let count = if len == 0 { 0 } else { end - start + 1 };
+    let mut head = format!(
+        "HTTP/1.1 {}\r\ncontent-type: {mime}\r\ncontent-length: {count}\r\naccept-ranges: bytes\r\ncache-control: no-store\r\nconnection: close\r\n",
+        if partial { "206 Partial Content" } else { "200 OK" }
+    );
+    if partial {
+        head.push_str(&format!("content-range: bytes {start}-{end}/{len}\r\n"));
+    }
+    head.push_str("\r\n");
+    stream.write_all(head.as_bytes()).await?;
+    if head_only || count == 0 {
+        return stream.shutdown().await;
+    }
+    file.seek(std::io::SeekFrom::Start(start)).await?;
+    let mut left = count;
+    let mut buf = vec![0u8; 256 * 1024];
+    while left > 0 {
+        let want = buf.len().min(left as usize);
+        let n = file.read(&mut buf[..want]).await?;
+        if n == 0 {
+            break;
+        }
+        stream.write_all(&buf[..n]).await?;
+        left -= n as u64;
+    }
+    stream.shutdown().await
 }
 
 /// Take the token out of every URI of an HLS playlist: the segment lines
@@ -500,6 +605,16 @@ mod tests {
         assert_eq!(parse_target(&format!("/{TOKEN}/jf/Videos/{ID}/.\n./x"), TOKEN), None);
         assert_eq!(parse_target(&format!("/{TOKEN}/jf/Videos/{ID}/stream?a=\t"), TOKEN), None);
         assert_eq!(parse_target(&format!("/{TOKEN}/jf/Videos/{ID}/.hidden"), TOKEN), None);
+    }
+
+    #[test]
+    fn local_routes_take_only_an_id_and_a_track_number() {
+        assert_eq!(parse_target(&format!("/{TOKEN}/local/{ID}/file"), TOKEN), Some(Route::Local { id: ID.into(), sub: None }));
+        assert_eq!(parse_target(&format!("/{TOKEN}/local/{ID}/sub/3"), TOKEN), Some(Route::Local { id: ID.into(), sub: Some(3) }));
+        assert_eq!(parse_target(&format!("/{TOKEN}/local/{ID}/sub/../x"), TOKEN), None);
+        assert_eq!(parse_target(&format!("/{TOKEN}/local/../../etc/passwd/file"), TOKEN), None);
+        assert_eq!(parse_target(&format!("/{TOKEN}/local/{ID}/file/x"), TOKEN), None);
+        assert_eq!(parse_target(&format!("/{TOKEN}/local/{ID}/sub/-1"), TOKEN), None);
     }
 
     #[test]

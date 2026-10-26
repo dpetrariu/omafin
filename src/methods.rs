@@ -59,6 +59,7 @@ pub async fn dispatch(app: &Arc<App>, method: &str, params: &Value) -> Result<Va
 
         "downloads.list" => crate::downloads::list(app).await,
         "downloads.add" => crate::downloads::add(app, params).await,
+        "downloads.items" => crate::downloads::items(app, params).await,
         "downloads.addSeason" => crate::downloads::add_season(app, params).await,
         "downloads.pause" => crate::downloads::pause(app, params).await,
         "downloads.resume" => crate::downloads::resume(app, params).await,

@@ -227,6 +227,8 @@ pub fn trickplay(item: &Value, source_id: &str) -> Value {
 pub async fn server_overview(app: &App) -> Result<Value> {
     let uid = user_id(app)?;
     let me = app.jellyfin.get("/Users/Me").await?;
+    // Back online: what was watched offline goes to the server.
+    crate::downloads::sync_pending(app).await;
     let (base, _) = app.jellyfin.base().await?;
     let info = app.jellyfin.public_info(&base).await.unwrap_or(Value::Null);
     let views = views_list_for(app, &uid).await.unwrap_or_default();
@@ -420,10 +422,39 @@ pub async fn genres_list(app: &App, params: &Value) -> Result<Value> {
 
 /// A details page: the card, plus the story, the people, the files and,
 /// for a show, the episode to watch next.
+/// The offline stand-in for a failed request: when the server cannot be
+/// reached, a downloaded title answers from its saved metadata.
+fn offline(err: &Error) -> bool {
+    err.code == crate::error::NETWORK || err.code == crate::error::NOT_CONFIGURED
+}
+
 pub async fn item_get(app: &App, params: &Value) -> Result<Value> {
-    let uid = user_id(app)?;
     let id = id_param(params, "id")?;
-    let item = app.jellyfin.get(&format!("/Items/{id}?userId={uid}")).await?;
+    let uid = match user_id(app) {
+        Ok(uid) => uid,
+        Err(err) => return crate::downloads::offline_details(app, id).ok_or(err),
+    };
+    let item = match app.jellyfin.get(&format!("/Items/{id}?userId={uid}")).await {
+        Ok(item) => item,
+        Err(err) if offline(&err) => return crate::downloads::offline_details(app, id).ok_or(err),
+        Err(err) => return Err(err),
+    };
+    let mut out = details(&item, id);
+    if item["Type"] == "Series" {
+        let next = app
+            .jellyfin
+            .get(&format!("/Shows/NextUp?userId={uid}&seriesId={id}&limit=1&fields={CARD_FIELDS},Overview&{CARD_IMAGES}&enableResumable=true&enableRewatching=false"))
+            .await
+            .ok()
+            .and_then(|l| cards(&l).into_iter().next());
+        out["nextUp"] = next.unwrap_or(Value::Null);
+    }
+    Ok(out)
+}
+
+/// A details page from a full item, as the server sends it or as a
+/// download saved it.
+pub fn details(item: &Value, id: &str) -> Value {
     let mut out = card(&item);
     let obj = out.as_object_mut().expect("card is an object");
     obj.insert("overview".into(), text(&item, "Overview"));
@@ -470,46 +501,60 @@ pub async fn item_get(app: &App, params: &Value) -> Result<Value> {
         }
     }
     obj.insert("links".into(), Value::Object(links));
-    if item["Type"] == "Series" {
-        let next = app
-            .jellyfin
-            .get(&format!("/Shows/NextUp?userId={uid}&seriesId={id}&limit=1&fields={CARD_FIELDS},Overview&{CARD_IMAGES}&enableResumable=true&enableRewatching=false"))
-            .await
-            .ok()
-            .and_then(|l| cards(&l).into_iter().next());
-        obj.insert("nextUp".into(), next.unwrap_or(Value::Null));
-    }
-    Ok(out)
+    out
 }
 
 pub async fn seasons(app: &App, params: &Value) -> Result<Value> {
-    let uid = user_id(app)?;
     let id = id_param(params, "id")?;
-    let list = app.jellyfin.get(&format!("/Shows/{id}/Seasons?userId={uid}&fields={CARD_FIELDS}&{CARD_IMAGES}")).await?;
-    Ok(json!(cards(&list)))
+    let uid = match user_id(app) {
+        Ok(uid) => uid,
+        Err(_) => return Ok(json!(crate::downloads::offline_seasons(app, id))),
+    };
+    match app.jellyfin.get(&format!("/Shows/{id}/Seasons?userId={uid}&fields={CARD_FIELDS}&{CARD_IMAGES}")).await {
+        Ok(list) => Ok(json!(cards(&list))),
+        Err(err) if offline(&err) => Ok(json!(crate::downloads::offline_seasons(app, id))),
+        Err(err) => Err(err),
+    }
 }
 
 pub async fn episodes(app: &App, params: &Value) -> Result<Value> {
-    let uid = user_id(app)?;
     let id = id_param(params, "id")?;
-    let mut path = format!("/Shows/{id}/Episodes?userId={uid}&fields={CARD_FIELDS},Overview&{CARD_IMAGES}");
     let season = str_param(params, "seasonId");
     if !season.is_empty() {
-        path.push_str(&format!("&seasonId={}", require_id(season)?));
+        require_id(season)?;
     }
-    let list = app.jellyfin.get(&path).await?;
-    Ok(json!(cards(&list)))
+    let uid = match user_id(app) {
+        Ok(uid) => uid,
+        Err(_) => return Ok(json!(crate::downloads::offline_episodes(app, id, season))),
+    };
+    let mut path = format!("/Shows/{id}/Episodes?userId={uid}&fields={CARD_FIELDS},Overview&{CARD_IMAGES}");
+    if !season.is_empty() {
+        path.push_str(&format!("&seasonId={season}"));
+    }
+    match app.jellyfin.get(&path).await {
+        Ok(list) => Ok(json!(cards(&list))),
+        Err(err) if offline(&err) => Ok(json!(crate::downloads::offline_episodes(app, id, season))),
+        Err(err) => Err(err),
+    }
 }
 
 /// The episode after this one, across seasons, or null at the end of a show.
 pub async fn next_episode(app: &App, params: &Value) -> Result<Value> {
-    let uid = user_id(app)?;
     let id = id_param(params, "id")?;
     let series = id_param(params, "seriesId")?;
-    let list = app
+    let uid = match user_id(app) {
+        Ok(uid) => uid,
+        Err(_) => return Ok(crate::downloads::offline_next(app, id, series)),
+    };
+    let list = match app
         .jellyfin
         .get(&format!("/Shows/{series}/Episodes?userId={uid}&startItemId={id}&limit=2&fields={CARD_FIELDS},Overview&{CARD_IMAGES}"))
-        .await?;
+        .await
+    {
+        Ok(list) => list,
+        Err(err) if offline(&err) => return Ok(crate::downloads::offline_next(app, id, series)),
+        Err(err) => return Err(err),
+    };
     let items = cards(&list);
     Ok(items.into_iter().find(|e| e["id"].as_str() != Some(id)).unwrap_or(Value::Null))
 }
@@ -517,8 +562,11 @@ pub async fn next_episode(app: &App, params: &Value) -> Result<Value> {
 pub async fn similar(app: &App, params: &Value) -> Result<Value> {
     let uid = user_id(app)?;
     let id = id_param(params, "id")?;
-    let list = app.jellyfin.get(&format!("/Items/{id}/Similar?userId={uid}&limit=16&fields={CARD_FIELDS}&{CARD_IMAGES}")).await?;
-    Ok(json!(cards(&list)))
+    match app.jellyfin.get(&format!("/Items/{id}/Similar?userId={uid}&limit=16&fields={CARD_FIELDS}&{CARD_IMAGES}")).await {
+        Ok(list) => Ok(json!(cards(&list))),
+        Err(err) if offline(&err) => Ok(json!([])),
+        Err(err) => Err(err),
+    }
 }
 
 // ---------------------------------------------------------------- search

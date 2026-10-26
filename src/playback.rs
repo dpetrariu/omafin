@@ -19,6 +19,7 @@ use crate::error::{Error, Result};
 use crate::jellyfin::profile::{self, Player};
 use crate::jellyfin::{TICKS_PER_SECOND, require_id};
 use crate::library::{self, str_param, user_id};
+use std::path::Path;
 
 const REPORT_EVERY: Duration = Duration::from_secs(10);
 
@@ -34,6 +35,10 @@ pub struct Session {
     pub paused: bool,
     pub started: bool,
     pub player: Player,
+    /// Playing a downloaded file: positions are kept with the download too,
+    /// and remembered for the server when it cannot be told.
+    pub local: bool,
+    pub runtime: f64,
     last_report: Option<Instant>,
 }
 
@@ -116,8 +121,12 @@ pub fn track_ordinal(streams: &[Value], kind: &str, index: i64) -> Option<usize>
 
 /// Ask Jellyfin how to play an item and prepare everything a player needs.
 pub async fn prepare(app: &App, params: &Value, player: Player) -> Result<Value> {
-    let uid = user_id(app)?;
     let id = require_id(str_param(params, "id"))?.to_string();
+    // A downloaded title plays from its file, without asking the server.
+    if let Some(entry) = app.downloads.playable(&id) {
+        return prepare_local(app, params, player, entry).await;
+    }
+    let uid = user_id(app)?;
     let item = app.jellyfin.get(&format!("/Items/{id}?userId={uid}")).await?;
     if item.get("MediaType").and_then(|v| v.as_str()) != Some("Video") {
         return Err(Error::invalid("Omafin plays films and episodes"));
@@ -277,6 +286,8 @@ pub async fn prepare(app: &App, params: &Value, player: Player) -> Result<Value>
         paused: false,
         started: false,
         player,
+        local: false,
+        runtime: source["runtime"].as_f64().unwrap_or(0.0),
         last_report: None,
     };
     // A new session ends the old one, so the server stops any transcode,
@@ -358,20 +369,7 @@ fn pick_subtitle(streams: &[Value], prefs: &crate::config::PlaybackSettings, aud
 /// Intros, recaps, credits and previews, in seconds.
 async fn media_segments(app: &App, id: &str) -> Result<Vec<Value>> {
     let list = app.jellyfin.get(&format!("/MediaSegments/{id}")).await?;
-    Ok(list
-        .get("Items")
-        .and_then(|v| v.as_array())
-        .map(|a| {
-            a.iter()
-                .filter_map(|s| {
-                    let kind = s.get("Type")?.as_str()?;
-                    let start = s.get("StartTicks")?.as_i64()? as f64 / TICKS_PER_SECOND as f64;
-                    let end = s.get("EndTicks")?.as_i64()? as f64 / TICKS_PER_SECOND as f64;
-                    (end > start).then(|| json!({ "type": kind, "start": start, "end": end }))
-                })
-                .collect()
-        })
-        .unwrap_or_default())
+    Ok(segments_of(&list))
 }
 
 fn report_body(session: &Session) -> Value {
@@ -390,6 +388,138 @@ fn report_body(session: &Session) -> Value {
     })
 }
 
+/// Play a downloaded file: everything comes from what the download saved,
+/// so it works with the server out of reach.
+async fn prepare_local(app: &App, params: &Value, player: Player, entry: crate::downloads::Entry) -> Result<Value> {
+    let id = entry.id.clone();
+    let item = crate::downloads::Downloads::item_json(&entry)
+        .ok_or_else(|| Error::internal("The download's details are missing; download it again"))?;
+    let source_info = item
+        .get("MediaSources")
+        .and_then(|v| v.as_array())
+        .and_then(|a| a.iter().find(|s| s["Id"].as_str() == Some(&entry.source_id)).or_else(|| a.first()))
+        .cloned()
+        .unwrap_or(Value::Null);
+    let source = library::media_source(&source_info);
+    let source_id = entry.source_id.clone();
+    let streams: Vec<Value> = source["streams"].as_array().cloned().unwrap_or_default();
+    let settings = app.settings();
+    let audio = int_param(params, "audioIndex")
+        .or_else(|| pick_audio(&streams, &settings.playback.audio_language))
+        .or_else(|| source["defaultAudio"].as_i64());
+    let mut subtitle = match int_param(params, "subtitleIndex") {
+        Some(i) if i < 0 => None,
+        Some(i) => Some(i),
+        None => pick_subtitle(&streams, &settings.playback, audio, source["defaultSubtitle"].as_i64()),
+    };
+    let mut needs_mpv = Value::Null;
+    if player == Player::Window {
+        let chosen = subtitle.and_then(|i| streams.iter().find(|s| s["type"] == "Subtitle" && s["index"].as_i64() == Some(i)));
+        if chosen.map(|s| profile::is_picture_subtitle(s["codec"].as_str().unwrap_or(""))).unwrap_or(false) {
+            // Nothing converts offline: picture subtitles are mpv's.
+            needs_mpv = json!(subtitle);
+            subtitle = None;
+        }
+    }
+    let start = params.get("start").and_then(|v| v.as_f64()).unwrap_or(0.0).max(0.0);
+    let subtitles: Vec<Value> = streams
+        .iter()
+        .filter(|s| s["type"] == "Subtitle")
+        .map(|s| {
+            let picture = profile::is_picture_subtitle(s["codec"].as_str().unwrap_or(""));
+            let index = s["index"].as_i64().unwrap_or(-1);
+            let mut s = s.clone();
+            s["picture"] = json!(picture);
+            s["url"] = if !picture && app.downloads.subtitle_file(&id, index).is_some() { json!(format!("/local/{id}/sub/{index}")) } else { Value::Null };
+            s
+        })
+        .collect();
+    let segments: Vec<Value> = std::fs::read(Path::new(&entry.meta).join("segments.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        .map(|v| segments_of(&v))
+        .unwrap_or_default();
+    let mut card = entry.card.clone();
+    card["offline"] = json!(true);
+    let runtime = source["runtime"].as_f64().or(card["runtime"].as_f64()).unwrap_or(0.0);
+    let session_id = format!("L{}", crate::config::new_id());
+    let session = Session {
+        id: session_id.clone(),
+        item_id: id.clone(),
+        source_id: source_id.clone(),
+        method: "DirectPlay",
+        audio,
+        subtitle,
+        position: start,
+        paused: false,
+        started: false,
+        player,
+        local: true,
+        runtime,
+        last_report: None,
+    };
+    let previous = app.playback.current.lock().await.replace(session);
+    if let Some(previous) = previous {
+        end_session(app, &previous).await;
+    }
+    if player == Player::Window {
+        stop_mpv(app);
+    }
+    Ok(json!({
+        "session": session_id,
+        "item": card,
+        "sourceId": source_id,
+        "method": "DirectPlay",
+        "transcodeReasons": [],
+        "url": format!("/local/{id}/file"),
+        "local": true,
+        "hls": false,
+        "start": start,
+        "runtime": runtime,
+        "audioIndex": audio,
+        "subtitleIndex": subtitle,
+        "burnedIn": false,
+        "allowTranscoding": false,
+        "needsMpv": needs_mpv,
+        "audio": streams.iter().filter(|s| s["type"] == "Audio").cloned().collect::<Vec<_>>(),
+        "subtitles": subtitles,
+        "video": streams.iter().find(|s| s["type"] == "Video").cloned().unwrap_or(Value::Null),
+        "audioTrack": audio.and_then(|a| track_ordinal(&streams, "Audio", a)),
+        "segments": segments,
+        "chapters": item.get("Chapters").and_then(|v| v.as_array()).map(|a| a.iter().map(|c| json!({
+            "name": c.get("Name").cloned().unwrap_or(Value::Null),
+            "start": c.get("StartPositionTicks").and_then(|v| v.as_i64()).map(|t| t as f64 / TICKS_PER_SECOND as f64).unwrap_or(0.0),
+        })).collect::<Vec<_>>()).unwrap_or_default(),
+        "trickplay": Value::Null,
+    }))
+}
+
+fn segments_of(list: &Value) -> Vec<Value> {
+    list.get("Items")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|s| {
+                    let kind = s.get("Type")?.as_str()?;
+                    let start = s.get("StartTicks")?.as_i64()? as f64 / TICKS_PER_SECOND as f64;
+                    let end = s.get("EndTicks")?.as_i64()? as f64 / TICKS_PER_SECOND as f64;
+                    (end > start).then(|| json!({ "type": kind, "start": start, "end": end }))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A downloaded title's place, kept with the download (and for the server
+/// when it could not be told).
+fn record_local(app: &App, session: &Session, told: bool) {
+    if session.local {
+        if let Some(entry) = app.downloads.record_progress(&session.item_id, session.position, session.runtime, told) {
+            crate::downloads::notify_entry(app, &entry);
+        }
+    }
+}
+
 async fn report_stopped(app: &App, session: &Session) -> Result<Value> {
     let _order = app.playback.reporting.lock().await;
     app.jellyfin.post("/Sessions/Playing/Stopped", report_body(session)).await
@@ -399,7 +529,10 @@ async fn report_stopped(app: &App, session: &Session) -> Result<Value> {
 /// started but may have set a transcode going.
 async fn end_session(app: &App, session: &Session) {
     if session.started || session.method != "DirectPlay" {
-        let _ = report_stopped(app, session).await;
+        let told = report_stopped(app, session).await.is_ok();
+        if session.started {
+            record_local(app, session, told);
+        }
     }
 }
 
@@ -473,7 +606,13 @@ pub async fn report(app: &App, params: &Value) -> Result<Value> {
             "/Sessions/Playing/Progress"
         }
     };
-    app.jellyfin.post(path, body).await?;
+    let sent = app.jellyfin.post(path, body).await;
+    if snapshot.local {
+        // A download's place is kept whether or not the server heard.
+        record_local(app, &snapshot, sent.is_ok());
+        return Ok(json!({ "reported": sent.is_ok(), "kept": true }));
+    }
+    sent?;
     Ok(json!({ "reported": true }))
 }
 
@@ -551,6 +690,9 @@ pub async fn play_in_mpv(app: &Arc<App>, params: &Value) -> Result<Value> {
             _ => "srt",
         };
         subtitle_map.push(index);
+        if prepared["local"] == true {
+            return Some(format!("{base}/local/{item}/sub/{index}"));
+        }
         Some(format!("{base}/jf/Videos/{item}/{source}/Subtitles/{index}/0/Stream.{format}"))
     });
     let app = app.clone();

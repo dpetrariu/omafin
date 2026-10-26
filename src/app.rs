@@ -43,6 +43,7 @@ impl App {
             .await;
         let media = Media::start(jellyfin.clone(), paths.media_cache()).await?;
         let downloads = Downloads::load(paths.downloads_index());
+        let _ = media.downloads.set(downloads.clone());
         let app = Arc::new(App {
             paths,
             settings: RwLock::new(settings),

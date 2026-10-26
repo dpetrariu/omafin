@@ -280,18 +280,31 @@ Item {
       width: parent.width
       horizontalAlignment: Text.AlignHCenter
       wrapMode: Text.Wrap
-      text: root.error || "Nothing here yet. Films and shows appear once your Jellyfin libraries have them."
+      text: root.error && root.service.downloadsDone > 0
+        ? root.error + ". Your downloads still play: they are in Downloaded."
+        : root.error || "Nothing here yet. Films and shows appear once your Jellyfin libraries have them."
       textFormat: Text.PlainText
       color: root.error ? root.theme.urgent : root.theme.dim
       font.family: root.theme.font
       font.pixelSize: root.theme.small
     }
-    TextButton {
+    Row {
       visible: root.error !== ""
       anchors.horizontalCenter: parent.horizontalCenter
-      theme: root.theme
-      text: "Try again"
-      onClicked: root.reload()
+      spacing: root.theme.space(8)
+      TextButton {
+        visible: root.service.downloadsDone > 0
+        theme: root.theme
+        text: "Open Downloaded"
+        icon: "downloaded"
+        primary: true
+        onClicked: root.openGrid({ kind: "grid", key: "downloaded", title: "Downloaded", downloaded: true, sort: "added", descending: true })
+      }
+      TextButton {
+        theme: root.theme
+        text: "Try again"
+        onClicked: root.reload()
+      }
     }
   }
 }

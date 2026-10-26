@@ -70,6 +70,9 @@ pub struct Entry {
     pub finished: u64,
     /// The metadata and pictures are saved.
     pub meta_saved: bool,
+    /// Watched here while the server was out of reach, not told yet:
+    /// { position, played, at } (seconds, bool, unix seconds).
+    pub pending: Value,
     #[serde(skip)]
     pub speed: f64,
     #[serde(skip)]
@@ -96,6 +99,7 @@ impl Default for Entry {
             added: 0,
             finished: 0,
             meta_saved: false,
+            pending: Value::Null,
             speed: 0.0,
             retry_at: None,
             attempts: 0,
@@ -207,6 +211,10 @@ impl Downloads {
     }
 }
 
+pub fn notify_entry(app: &App, entry: &Entry) {
+    notify(app, entry)
+}
+
 fn notify(app: &App, entry: &Entry) {
     app.notifier.notify("downloads.changed", json!({ "entry": entry.to_json() }));
 }
@@ -295,6 +303,263 @@ fn bytes_text(n: u64) -> String {
 fn root(app: &App) -> PathBuf {
     let dir = app.settings().downloads_dir;
     if dir.is_empty() { app.paths.default_downloads() } else { PathBuf::from(dir) }
+}
+
+// ---------------------------------------------------------------- offline
+
+impl Downloads {
+    /// A finished download whose file is really there.
+    pub fn playable(&self, id: &str) -> Option<Entry> {
+        let entry = self.get(id)?;
+        (entry.state == State::Done && matches!(entry.video().try_exists(), Ok(true))).then_some(entry)
+    }
+
+    fn all(&self) -> Vec<Entry> {
+        self.entries.lock().unwrap().clone()
+    }
+
+    /// A saved picture for an item: its own (films, episodes), its show's,
+    /// or a cast member's.
+    pub fn local_image(&self, id: &str, kind: &str) -> Option<PathBuf> {
+        let file = format!("{}.img", kind.to_ascii_lowercase());
+        for e in self.all() {
+            if e.id == id {
+                let p = Path::new(&e.meta).join(&file);
+                if p.exists() {
+                    return Some(p);
+                }
+            }
+            if e.card["seriesId"].as_str() == Some(id) && !e.series_meta.is_empty() {
+                let p = Path::new(&e.series_meta).join(&file);
+                if p.exists() {
+                    return Some(p);
+                }
+            }
+            if kind == "Primary" {
+                let p = Path::new(&e.meta).join("people").join(format!("{id}.jpg"));
+                if p.exists() {
+                    return Some(p);
+                }
+            }
+        }
+        None
+    }
+
+    /// A saved subtitle track of a download.
+    pub fn subtitle_file(&self, id: &str, index: i64) -> Option<PathBuf> {
+        let entry = self.get(id)?;
+        let dir = Path::new(&entry.meta).join("subtitles");
+        std::fs::read_dir(&dir).ok()?.flatten().map(|f| f.path()).find(|p| {
+            p.file_name().and_then(|n| n.to_str()).map(|n| n.starts_with(&format!("{index}.")) && n.ends_with(".vtt")).unwrap_or(false)
+        })
+    }
+
+    pub fn item_json(entry: &Entry) -> Option<Value> {
+        read_json(&Path::new(&entry.meta).join("item.json"))
+    }
+
+    /// Where a download was left: kept on its card, so lists and Resume
+    /// work offline, and remembered for the server when it cannot be told.
+    pub fn record_progress(&self, id: &str, position: f64, runtime: f64, told_server: bool) -> Option<Entry> {
+        let played = runtime > 0.0 && position >= runtime * 0.9;
+        let entry = self.with(id, |e| {
+            let user = e.card["user"].as_object_mut();
+            if let Some(user) = user {
+                user.insert("played".into(), json!(played || user.get("played").and_then(|v| v.as_bool()).unwrap_or(false) && position < 1.0));
+                user.insert("position".into(), if played || position < 1.0 { Value::Null } else { json!(position.round()) });
+                user.insert("percent".into(), if played || runtime <= 0.0 { Value::Null } else { json!(position / runtime * 100.0) });
+            }
+            e.pending = if told_server { Value::Null } else { json!({ "position": position, "played": played, "at": now() }) };
+            e.clone()
+        });
+        self.save();
+        entry
+    }
+}
+
+fn read_json(path: &Path) -> Option<Value> {
+    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}
+
+/// Downloaded episodes of a show, in order.
+fn episodes_of(app: &App, series: &str) -> Vec<Entry> {
+    let mut eps: Vec<Entry> = app
+        .downloads
+        .all()
+        .into_iter()
+        .filter(|e| e.card["seriesId"].as_str() == Some(series) && e.card["type"] == "Episode")
+        .collect();
+    eps.sort_by_key(|e| (e.card["parentIndex"].as_i64().unwrap_or(0), e.card["index"].as_i64().unwrap_or(0)));
+    eps
+}
+
+/// A details page from what a download saved, for when the server is out
+/// of reach: a film or an episode, or a show with downloaded episodes.
+pub fn offline_details(app: &App, id: &str) -> Option<Value> {
+    if let Some(entry) = app.downloads.get(id) {
+        let item = Downloads::item_json(&entry)?;
+        let mut out = library::details(&item, id);
+        out["user"] = entry.card["user"].clone();
+        out["offline"] = json!(true);
+        return Some(out);
+    }
+    let eps = episodes_of(app, id);
+    let first = eps.first()?;
+    let series = read_json(&Path::new(&first.series_meta).join("item.json"))?;
+    let mut out = library::details(&series, id);
+    let unplayed = eps.iter().filter(|e| e.card["user"]["played"] != true).count();
+    out["user"]["unplayed"] = json!(unplayed);
+    out["nextUp"] = eps.iter().find(|e| e.card["user"]["played"] != true).map(|e| e.card.clone()).unwrap_or(Value::Null);
+    out["offline"] = json!(true);
+    Some(out)
+}
+
+/// The seasons of a show that have downloaded episodes.
+pub fn offline_seasons(app: &App, series: &str) -> Vec<Value> {
+    let mut seasons: Vec<Value> = Vec::new();
+    for e in episodes_of(app, series) {
+        let id = e.card["seasonId"].clone();
+        if seasons.iter().any(|s| s["id"] == id) {
+            continue;
+        }
+        let index = e.card["parentIndex"].clone();
+        let mut season = json!({
+            "id": id, "type": "Season", "isFolder": true,
+            "name": e.card["seasonName"].as_str().map(String::from).unwrap_or_else(|| format!("Season {}", index)),
+            "index": index, "seriesId": series, "seriesName": e.card["seriesName"],
+            "images": { "primary": e.card["images"]["series"], "backdrop": e.card["images"]["backdrop"] },
+            "user": { "played": false, "favorite": false },
+        });
+        let unplayed = episodes_of(app, series)
+            .iter()
+            .filter(|x| x.card["seasonId"] == season["id"] && x.card["user"]["played"] != true)
+            .count();
+        season["user"]["unplayed"] = json!(unplayed);
+        seasons.push(season);
+    }
+    seasons
+}
+
+pub fn offline_episodes(app: &App, series: &str, season: &str) -> Vec<Value> {
+    episodes_of(app, series)
+        .into_iter()
+        .filter(|e| season.is_empty() || e.card["seasonId"].as_str() == Some(season))
+        .map(|e| e.card)
+        .collect()
+}
+
+/// The downloaded episode after this one, if there is one.
+pub fn offline_next(app: &App, id: &str, series: &str) -> Value {
+    let eps = episodes_of(app, series);
+    let at = eps.iter().position(|e| e.id == id);
+    at.and_then(|i| eps.get(i + 1)).map(|e| e.card.clone()).unwrap_or(Value::Null)
+}
+
+/// Tell the server where downloads were left while it was out of reach,
+/// unless it has heard of a later viewing since (another device wins then).
+pub async fn sync_pending(app: &App) {
+    let Ok(uid) = user_id(app) else { return };
+    let pending: Vec<Entry> = app.downloads.all().into_iter().filter(|e| e.pending.is_object()).collect();
+    for e in pending {
+        let at = e.pending["at"].as_u64().unwrap_or(0);
+        let server = app.jellyfin.get(&format!("/UserItems/{}/UserData?userId={uid}", e.id)).await;
+        let Ok(server) = server else { return }; // still out of reach
+        let server_at = server
+            .get("LastPlayedDate")
+            .and_then(|v| v.as_str())
+            .and_then(|d| chrono::DateTime::parse_from_rfc3339(d).ok())
+            .map(|d| d.timestamp() as u64)
+            .unwrap_or(0);
+        if server_at <= at {
+            let played = e.pending["played"].as_bool().unwrap_or(false);
+            let position = e.pending["position"].as_f64().unwrap_or(0.0);
+            let stamp = chrono::DateTime::from_timestamp(at as i64, 0).map(|d| d.to_rfc3339()).unwrap_or_default();
+            let body = json!({
+                "PlaybackPositionTicks": if played { 0 } else { (position * crate::jellyfin::TICKS_PER_SECOND as f64) as i64 },
+                "Played": played,
+                "LastPlayedDate": stamp,
+            });
+            if app.jellyfin.post(&format!("/UserItems/{}/UserData?userId={uid}", e.id), body).await.is_err() {
+                return;
+            }
+        }
+        if let Some(entry) = app.downloads.with(&e.id, |x| {
+            x.pending = Value::Null;
+            x.clone()
+        }) {
+            notify(app, &entry);
+        }
+        app.downloads.save();
+    }
+}
+
+/// The Downloaded library: films as they are, episodes gathered under their
+/// show, sorted and filtered like any library.
+pub async fn items(app: &App, params: &Value) -> Result<Value> {
+    if app.downloads.check_files() {
+        app.downloads.save();
+    }
+    let entries = app.downloads.all();
+    let mut cards: Vec<(Value, u64)> = Vec::new();
+    let mut shows: HashMap<String, (Value, u64, usize, usize)> = HashMap::new();
+    for e in &entries {
+        if e.card["type"] == "Episode" {
+            let Some(series) = e.card["seriesId"].as_str().filter(|s| valid_id(s)) else { continue };
+            let slot = shows.entry(series.to_string()).or_insert_with(|| {
+                let card = read_json(&Path::new(&e.series_meta).join("item.json"))
+                    .map(|s| library::card(&s))
+                    .unwrap_or_else(|| json!({ "id": series, "type": "Series", "name": e.card["seriesName"], "images": { "primary": e.card["images"]["series"] }, "user": {} }));
+                (card, e.added, 0, 0)
+            });
+            slot.1 = slot.1.max(e.added);
+            slot.2 += 1;
+            if e.card["user"]["played"] != true {
+                slot.3 += 1;
+            }
+        } else {
+            cards.push((e.card.clone(), e.added));
+        }
+    }
+    for (_, (mut card, added, count, unplayed)) in shows {
+        card["user"]["unplayed"] = json!(unplayed);
+        card["user"]["played"] = json!(unplayed == 0);
+        card["childCount"] = json!(count);
+        cards.push((card, added));
+    }
+    let filters: Vec<String> = params
+        .get("filters")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|f| f.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    cards.retain(|(c, _)| {
+        filters.iter().all(|f| match f.as_str() {
+            "played" => c["user"]["played"] == true,
+            "unplayed" => c["user"]["played"] != true,
+            "favorite" => c["user"]["favorite"] == true,
+            "resumable" => c["user"]["position"].as_f64().unwrap_or(0.0) > 0.0,
+            _ => true,
+        })
+    });
+    let key = |c: &Value, f: &str| -> String {
+        match f {
+            "released" => c["premiere"].as_str().map(String::from).unwrap_or_else(|| format!("{:04}", c["year"].as_i64().unwrap_or(0))),
+            "rating" => format!("{:08.3}", c["rating"].as_f64().unwrap_or(0.0)),
+            "runtime" => format!("{:012}", c["runtime"].as_f64().unwrap_or(0.0) as i64),
+            "played" => c["user"]["lastPlayed"].as_str().unwrap_or("").to_string(),
+            _ => c["name"].as_str().unwrap_or("").to_lowercase(),
+        }
+    };
+    let sort = str_param(params, "sort");
+    match sort {
+        "added" => cards.sort_by_key(|(_, added)| *added),
+        "" | "name" | "random" => cards.sort_by_key(|(c, _)| key(c, "name")),
+        other => cards.sort_by_key(|(c, _)| key(c, other)),
+    }
+    if params.get("descending").and_then(|v| v.as_bool()).unwrap_or(false) {
+        cards.reverse();
+    }
+    let total = cards.len();
+    Ok(json!({ "items": cards.into_iter().map(|(c, _)| c).collect::<Vec<_>>(), "total": total }))
 }
 
 // ---------------------------------------------------------------- RPC
@@ -880,6 +1145,10 @@ async fn save_metadata(app: &App, entry: &Entry) -> Result<()> {
     let item = app.jellyfin.get(&format!("/Items/{}?userId={uid}", entry.id)).await?;
     write_json(&meta.join("item.json"), &item)?;
     save_images(app, &item, &meta).await;
+    // Intros and credits, for Skip offline.
+    if let Ok(segments) = app.jellyfin.get(&format!("/MediaSegments/{}", entry.id)).await {
+        let _ = write_json(&meta.join("segments.json"), &segments);
+    }
     // Every text subtitle track, as the window draws them.
     let subs = meta.join("subtitles");
     let streams = item
