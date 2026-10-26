@@ -1,6 +1,7 @@
 use std::sync::{Arc, RwLock};
 
 use crate::config::Settings;
+use crate::downloads::Downloads;
 use crate::jellyfin::Jellyfin;
 use crate::media::Media;
 use crate::paths::Paths;
@@ -15,6 +16,7 @@ pub struct App {
     pub media: Arc<Media>,
     pub notifier: Notifier,
     pub playback: Arc<Playback>,
+    pub downloads: Arc<Downloads>,
     pub token_storage: RwLock<&'static str>,
     /// A Quick Connect sign-in waiting for approval: the address and secret.
     pub quick_connect: tokio::sync::Mutex<Option<(String, String)>>,
@@ -40,6 +42,7 @@ impl App {
             )
             .await;
         let media = Media::start(jellyfin.clone(), paths.media_cache()).await?;
+        let downloads = Downloads::load(paths.downloads_index());
         let app = Arc::new(App {
             paths,
             settings: RwLock::new(settings),
@@ -47,9 +50,11 @@ impl App {
             media,
             notifier,
             playback: Playback::new(),
+            downloads,
             token_storage: RwLock::new(token_storage),
             quick_connect: tokio::sync::Mutex::new(None),
         });
+        crate::downloads::start(app.clone());
         // Keep the poster cache under its cap.
         let pruner = app.clone();
         tokio::spawn(async move {

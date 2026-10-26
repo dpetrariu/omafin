@@ -24,6 +24,8 @@ pub struct Settings {
     /// This computer, as Jellyfin's session list names it. Stable per install.
     pub device_id: String,
     pub cache_cap_mb: u64,
+    /// Where downloads go; empty means ~/Videos/Omafin.
+    pub downloads_dir: String,
     pub playback: PlaybackSettings,
     /// Window preferences owned by the UI (sidebar, sort orders, …).
     pub ui: Value,
@@ -42,6 +44,7 @@ impl Default for Settings {
             server_name: String::new(),
             device_id: String::new(),
             cache_cap_mb: 1000,
+            downloads_dir: String::new(),
             playback: PlaybackSettings::default(),
             ui: Value::Object(Default::default()),
         }
@@ -169,6 +172,21 @@ impl Settings {
                 "serverEnabled" => next.server_enabled = bool_of(value)?,
                 "externalEnabled" => next.external_enabled = bool_of(value)?,
                 "cacheCapMb" => next.cache_cap_mb = u64_of(value)?,
+                "downloadsDir" => {
+                    let raw = str_of(value)?.trim();
+                    next.downloads_dir = if raw.is_empty() {
+                        String::new()
+                    } else {
+                        let path = paths::expand_home(raw);
+                        if !path.is_absolute() {
+                            return Err(Error::invalid("Choose the download folder by its full path"));
+                        }
+                        if path == paths::home() || path == std::path::Path::new("/") {
+                            return Err(Error::invalid("Pick a folder for videos rather than your whole home folder"));
+                        }
+                        path.to_string_lossy().trim_end_matches('/').to_string()
+                    };
+                }
                 "ui" => {
                     let Some(obj) = value.as_object() else {
                         return Err(Error::invalid("ui must be an object"));
@@ -331,6 +349,17 @@ mod tests {
         assert_eq!(p.audio_language, "eng");
         assert_eq!(p.subtitle_size, 50);
         assert_eq!(p.volume, 100);
+    }
+
+    #[test]
+    fn download_folder_must_be_a_real_folder() {
+        let mut settings = Settings::default().normalized();
+        assert!(settings.apply_patch(&json!({"downloadsDir": "Videos"})).is_err());
+        assert!(settings.apply_patch(&json!({"downloadsDir": "~"})).is_err());
+        settings.apply_patch(&json!({"downloadsDir": "/srv/films/"})).unwrap();
+        assert_eq!(settings.downloads_dir, "/srv/films");
+        settings.apply_patch(&json!({"downloadsDir": ""})).unwrap();
+        assert_eq!(settings.downloads_dir, "");
     }
 
     #[test]

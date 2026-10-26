@@ -5,6 +5,7 @@ import qs.Commons as Commons
 import qs.Ui
 import "components"
 import "lib/Icons.js" as Icons
+import "lib/Format.js" as Format
 
 // One icon and one click. A dot says mpv is playing something Omafin
 // started; the icon turns the urgent colour when the server cannot be
@@ -45,10 +46,11 @@ BarWidget {
       if (!root.service.ready) return "Omafin — starting"
       if (!root.service.configured) return "Omafin — sign in to your Jellyfin server"
       if (root.service.serverError) return "Omafin — " + root.service.serverError
+      if (root.service.activeDownload) return "Omafin — downloading " + Format.cardTitle(root.service.activeDownload.card) + " · " + Format.downloadLine(root.service.activeDownload)
       return "Omafin — " + (root.service.serverName || "Jellyfin")
     }
 
-    readonly property bool busy: !!root.service && root.service.externalPlayback !== null
+    readonly property bool busy: !!root.service && (root.service.externalPlayback !== null || root.service.activeDownload !== null)
     readonly property bool attention: !!root.service && root.service.configured && root.service.serverError !== ""
 
     iconComponent: Component {

@@ -55,6 +55,7 @@ Item {
   signal toggleFavorite(var item)
   signal playInMpv(var item, var options)
   signal showMenu(var items, Item anchor, var handler)
+  signal downloadClicked(var item, Item anchor)
 
   Component.onCompleted: reload()
   Connections {
@@ -386,6 +387,15 @@ Item {
             color: root.shown && root.shown.user && root.shown.user.favorite ? root.theme.urgent : root.theme.foreground
             tooltip: root.shown && root.shown.user && root.shown.user.favorite ? "A favourite. Remove from favourites (f)" : "Add to favourites (f)"
             onClicked: root.toggleFavorite(root.shown)
+          }
+          DownloadButton {
+            visible: !root.isSeries && root.playTarget !== null
+            theme: root.theme
+            service: root.service
+            item: root.shown
+            fileSize: root.source && root.source.size ? root.source.size : 0
+            anchors.verticalCenter: parent.verticalCenter
+            onClicked: function(anchor) { root.downloadClicked(root.shown, anchor) }
           }
           IconButton {
             visible: root.playTarget !== null && root.service.mpvAvailable

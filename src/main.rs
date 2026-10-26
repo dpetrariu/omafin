@@ -1,5 +1,6 @@
 mod app;
 mod config;
+mod downloads;
 mod error;
 mod jellyfin;
 mod library;

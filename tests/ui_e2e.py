@@ -40,6 +40,8 @@ class Harness:
         os.makedirs(os.path.join(home, "config"))
         self.env = dict(os.environ, QT_QPA_PLATFORM="offscreen", WAYLAND_DISPLAY="",
                         OMAFIN_UI=os.path.join(REPO, "ui"), OMAFIN_BIN=binary, OMAFIN_HOME=home,
+                        # The desktop trash too: removing a download must never reach the real one.
+                        XDG_DATA_HOME=os.path.join(root, "xdg"),
                         PATH=os.path.join(HERE, "fakebin") + os.pathsep + os.environ["PATH"])
         self.log = open(os.path.join(root, "qs.log"), "w")
         self.proc = subprocess.Popen(["qs", "-p", self.shell], env=self.env, stdout=self.log, stderr=subprocess.STDOUT)
@@ -403,6 +405,64 @@ def main():
         h.js(f"app.playInMpv({{ id: '{BLADE}', type: 'Movie', mediaType: 'Video', name: 'Blade Runner', user: {{ position: 5 }} }}, {{}})")
         wait_for("mpv reports", lambda: len([r for r in reports(port, BLADE) if r["method"] == "DirectPlay" and r["kind"] == "stop"]) >= 2, 15)
         print("ok: play in mpv")
+
+        # Downloads: the button beside Play starts one, shows it coming, and
+        # becomes a bin; deleting asks first and moves the file to the trash.
+        control = lambda **b: urllib.request.urlopen(urllib.request.Request(
+            f"http://127.0.0.1:{port}/_downloads", data=json.dumps(b).encode(),
+            headers={"Content-Type": "application/json"}, method="POST")).read()
+        control(throttle=700_000)
+        h.js(f"app.openItem({{ id: '{BLADE}', type: 'Movie', name: 'Blade Runner' }})")
+        wait_for("the film page", lambda: h.value("app.view().details ? app.view().details.id : ''") == BLADE, 10)
+        h.js(f"app.downloadAction(app.view().shown, hooks.content)")
+        wait_for("downloading", lambda: h.value(f"service.downloadOf('{BLADE}') ? service.downloadOf('{BLADE}').state : ''") == "downloading", 10)
+        wait_for("some progress", lambda: h.value(f"service.downloadOf('{BLADE}').bytes") > 700_000, 10)
+        assert "Downloading Blade Runner" in h.value("hooks.status.leftText"), h.value("hooks.status.leftText")
+        h.shot("17-downloading")
+        control(throttle=0)
+        wait_for("downloaded", lambda: h.value(f"service.downloadOf('{BLADE}').state") == "done", 20)
+        film = os.path.join(root, "home", "videos", "Omafin", "Movies", "Blade Runner (1982)", "Blade Runner (1982).mp4")
+        assert os.path.getsize(film) == 3_000_000
+        time.sleep(0.6)
+        h.shot("18-downloaded")
+        h.js(f"app.downloadAction(app.view().shown, hooks.content)")
+        assert h.value("hooks.confirm.opened") is True and "trash" in h.value("hooks.confirm.message")
+        h.js("hooks.confirm.confirm()")
+        wait_for("gone from downloads", lambda: h.value(f"service.downloadOf('{BLADE}') === null") is True, 10)
+        assert os.path.exists(os.path.join(root, "xdg", "Trash", "files", "Blade Runner (1982)", "Blade Runner (1982).mp4"))
+        assert not os.path.exists(film)
+        print("ok: download, progress, bin, delete to the trash")
+
+        # Pause and cancel from the button's menu while it downloads.
+        control(throttle=200_000)
+        h.js(f"app.startDownload({{ id: '{ARRIVAL}', type: 'Movie', name: 'Arrival' }})")
+        wait_for("Arrival on its way", lambda: h.value(f"service.downloadOf('{ARRIVAL}') ? service.downloadOf('{ARRIVAL}').state : ''") == "downloading", 10)
+        h.js(f"app.downloadAction({{ id: '{ARRIVAL}', type: 'Movie', name: 'Arrival' }}, hooks.content)")
+        assert h.value("hooks.menu.items.map(function(i) { return i.id })") == ["pause", "cancel"]
+        h.js("app.menuHandler('pause')")
+        wait_for("paused", lambda: h.value(f"service.downloadOf('{ARRIVAL}').state") == "paused", 10)
+        h.nav("back")
+        h.js(f"app.downloadAction({{ id: '{ARRIVAL}', type: 'Movie', name: 'Arrival' }}, hooks.content)")
+        assert h.value("hooks.menu.items.map(function(i) { return i.id })") == ["resume", "cancel"]
+        h.js("app.menuHandler('cancel')")
+        wait_for("cancelled", lambda: h.value(f"service.downloadOf('{ARRIVAL}') === null") is True, 10)
+        h.nav("back")
+        control(throttle=0)
+        print("ok: pause and cancel a download")
+
+        # A season from a show's page.
+        h.js(f"app.openItem({{ id: '{HOMELAND}', type: 'Series', name: 'Homeland' }})")
+        wait_for("the show page", lambda: h.value("app.view().episodes.length") == 3, 10)
+        h.js("app.showItemMenu(app.view().shown, hooks.content, 10, 10)")
+        labels = h.value("hooks.menu.items.map(function(i) { return i.label })")
+        assert "Download Season 1 (3 episodes)" in labels, labels
+        h.js("app.menuHandler('downloadSeason')")
+        wait_for("the season downloaded", lambda: h.value("service.downloadsDone") == 3, 30)
+        h.nav("back")
+        h.nav("down")
+        time.sleep(0.6)
+        h.shot("19-season-downloaded")
+        print("ok: a season downloads")
 
         # Settings, and the phone-width layout.
         h.key("settings", 1.0)

@@ -219,6 +219,40 @@ Item {
         onPicked: function(id) { root.setPlayback("subtitleSize", id) }
       }
 
+      SectionTitle { theme: root.theme; text: "Downloads" }
+      Note {
+        text: {
+          var s = root.service
+          var size = s.downloadList.filter(function(d) { return d.state === "done" }).reduce(function(a, d) { return a + Number(d.size || 0) }, 0)
+          return (s.downloadsDone > 0 ? Format.count(s.downloadsDone, "download", "downloads") + " (" + Format.bytes(size) + ") in " : "Downloads go to ")
+            + (s.downloadsRoot || "~/Videos/Omafin") + (s.downloadsFree > 0 ? ". " + Format.bytes(s.downloadsFree) + " free there." : ".")
+            + " Each title gets its own folder with its pictures and subtitles, so it shows and plays offline."
+        }
+      }
+      Row {
+        width: parent.width
+        spacing: root.theme.space(8)
+        TextField {
+          id: downloadsDir
+          width: parent.width - saveDir.width - root.theme.space(8)
+          placeholderText: root.service.downloadsRoot || "~/Videos/Omafin"
+          text: root.service.settings.downloadsDir || ""
+          font.family: root.theme.font
+          font.pixelSize: root.theme.body
+        }
+        TextButton {
+          id: saveDir
+          theme: root.theme
+          text: "Use this folder"
+          onClicked: root.service.updateSettings({ downloadsDir: downloadsDir.text }, function(r, e) {
+            if (!root) return
+            if (e) { root.toast(e.message, "error"); return }
+            root.service.loadDownloads()
+            root.toast(downloadsDir.text ? "New downloads go to " + downloadsDir.text + "; earlier ones stay where they are" : "New downloads go to ~/Videos/Omafin", "info")
+          })
+        }
+      }
+
       SectionTitle { theme: root.theme; text: "Server" }
       Note { text: "Omafin tries the home address first and the away address when home does not answer." }
       Note { text: "Home address (LAN)" }

@@ -37,6 +37,10 @@ STATE = {
     "logouts": 0,
     "requests": [],     # method, path (writes only)
     "playbackInfo": [], # what each PlaybackInfo asked for
+    "versions": {},     # item id -> file version (a new version changes bytes and date)
+    "throttle": 0,      # download bytes per second; 0 = as fast as it goes
+    "dropAfter": 0,     # end the next download after this many bytes
+    "downloads": [],    # each download request: item, range asked
 }
 MEDIA = {"dir": None}
 
@@ -67,6 +71,16 @@ def add(item):
     return item
 
 
+DOWNLOAD_SIZE = 3_000_000
+
+
+def payload(item_id):
+    """The bytes of an item's file: deterministic, and different per version."""
+    seed = (item_id + ":" + str(STATE["versions"].get(item_id, 0))).encode()
+    block = b"".join(zlib.crc32(seed + bytes([i])).to_bytes(4, "big") for i in range(256))
+    return (block * (DOWNLOAD_SIZE // len(block) + 1))[:DOWNLOAD_SIZE]
+
+
 def video_source(item_id, subs=False, container="mp4"):
     streams = [
         {"Type": "Video", "Index": 0, "Codec": "h264", "Width": 320, "Height": 240, "DisplayTitle": "240p H264 SDR", "VideoRangeType": "SDR", "IsDefault": True},
@@ -78,7 +92,7 @@ def video_source(item_id, subs=False, container="mp4"):
             {"Type": "Subtitle", "Index": 3, "Codec": "subrip", "Language": "eng", "DisplayTitle": "English - SUBRIP", "IsTextSubtitleStream": True, "IsDefault": False},
             {"Type": "Subtitle", "Index": 4, "Codec": "PGSSUB", "Language": "deu", "DisplayTitle": "German - PGSSUB", "IsTextSubtitleStream": False, "IsDefault": False},
         ]
-    return [{"Id": item_id, "Container": container, "Name": "test", "Size": 123456, "Bitrate": 900000, "RunTimeTicks": 60 * TICKS,
+    return [{"Id": item_id, "Container": container, "Name": "test", "Size": DOWNLOAD_SIZE, "Bitrate": 900000, "RunTimeTicks": 60 * TICKS,
              "ETag": "etag" + item_id[-6:], "MediaStreams": streams, "DefaultAudioStreamIndex": 1, "DefaultSubtitleStreamIndex": -1,
              "SupportsDirectPlay": True, "SupportsDirectStream": True, "SupportsTranscoding": True}]
 
@@ -110,6 +124,14 @@ def seed():
              "Chapters": [{"StartPositionTicks": 0, "Name": "Opening"}, {"StartPositionTicks": 30 * TICKS, "Name": "The middle"}] if i == 0 else [],
              "Trickplay": {mid: {"160": {"Width": 160, "Height": 90, "TileWidth": 10, "TileHeight": 10, "ThumbnailCount": 60, "Interval": 1000}}} if i == 0 else {},
              "LocalTrailerCount": 0})
+    # A second "Fargo (1996)": same title and year, another film.
+    twin = gid(107)
+    add({"Id": twin, "Name": "Fargo", "SortName": "fargo", "Type": "Movie", "MediaType": "Video", "IsFolder": False, "ParentId": "",
+         "ProductionYear": 1996, "RunTimeTicks": 60 * TICKS, "ImageTags": {"Primary": "twin"}, "MediaSources": video_source(twin)})
+    huge = gid(106)
+    add({"Id": huge, "Name": "The Very Long Cut", "SortName": "the very long cut", "Type": "Movie", "MediaType": "Video", "IsFolder": False,
+         "ParentId": "", "ProductionYear": 2001, "RunTimeTicks": 60 * TICKS, "DateCreated": "2026-09-01T10:00:00.0000000Z",
+         "ImageTags": {"Primary": "huge"}, "MediaSources": [dict(video_source(huge)[0], Size=10 ** 14)]})
     STATE["user"][gid(100)].update({"PlaybackPositionTicks": 4 * TICKS, "PlayedPercentage": 33.3, "LastPlayedDate": "2026-10-20T20:00:00.0000000Z"})
     STATE["user"][gid(102)].update({"IsFavorite": True})
     STATE["user"][gid(103)].update({"Played": True, "PlayCount": 1})
@@ -264,6 +286,13 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         path, q = url.path, parse_qs(url.query)
         body = self.body() if method in ("POST", "DELETE") else {}
+        m = re.match(r"^/Items/([0-9a-f]{32})/Download$", path)
+        if m and method in ("GET", "HEAD"):
+            # Outside the lock: a slow download must not hold up the rest.
+            try:
+                return self.download(m.group(1), q)
+            except (BrokenPipeError, ConnectionResetError):
+                return
         with LOCK:
             try:
                 self.dispatch(method, path, q, body)
@@ -281,7 +310,15 @@ class Handler(BaseHTTPRequestHandler):
                 "quick": [{"code": v["code"], "authorized": v["authorized"]} for v in STATE["quick"].values()],
                 "writes": STATE["requests"],
                 "playbackInfo": STATE["playbackInfo"],
+                "downloads": STATE["downloads"],
             })
+        if path == "/_downloads" and method == "POST":
+            for key in ("throttle", "dropAfter"):
+                if key in body:
+                    STATE[key] = int(body[key])
+            if "change" in body:
+                STATE["versions"][body["change"]] = STATE["versions"].get(body["change"], 0) + 1
+            return self.send(200, True)
         if path == "/_approve" and method == "POST":
             for v in STATE["quick"].values():
                 if v["code"] == body.get("code"):
@@ -538,6 +575,56 @@ class Handler(BaseHTTPRequestHandler):
                 out["TranscodingContainer"] = "ts"
             sources.append(out)
         return {"MediaSources": sources, "PlaySessionId": session}
+
+    def download(self, item_id, q):
+        with LOCK:
+            if not self.authed(q):
+                return self.send(401, "")
+            item = STATE["items"].get(item_id)
+            if not item or "MediaSources" not in item:
+                return self.send(404, "")
+            data = payload(item_id)
+            version = STATE["versions"].get(item_id, 0)
+            drop, STATE["dropAfter"] = STATE["dropAfter"], 0
+            throttle = STATE["throttle"]
+            rng = self.headers.get("Range")
+            STATE["downloads"].append({"item": item_id, "range": rng})
+        # Like Jellyfin: Range is honoured, If-Range is ignored, and there is
+        # no ETag, only Last-Modified.
+        modified = "Thu, %02d Jul 2026 16:23:58 GMT" % (23 + version)
+        start = 0
+        m = re.match(r"bytes=(\d+)-", rng or "")
+        if m:
+            start = int(m.group(1))
+            if start >= len(data):
+                return self.send(416, b"", "text/plain", {"Content-Range": "bytes */%d" % len(data)})
+        body = data[start:]
+        self.send_response(206 if m else 200)
+        self.send_header("Content-Type", "video/mp4")
+        self.send_header("Content-Length", str(len(body)))
+        if m:
+            self.send_header("Content-Range", "bytes %d-%d/%d" % (start, len(data) - 1, len(data)))
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Last-Modified", modified)
+        self.send_header("Content-Disposition", 'attachment; filename="%s.mp4"' % item["Name"].replace('"', ""))
+        self.end_headers()
+        if self.command == "HEAD":
+            return
+        sent = 0
+        step = 64 * 1024
+        import time
+        while sent < len(body):
+            chunk = body[sent:sent + step]
+            if drop and sent + len(chunk) > drop:
+                self.wfile.write(chunk[:drop - sent])
+                self.wfile.flush()
+                self.close_connection = True
+                self.connection.shutdown(2)
+                return
+            self.wfile.write(chunk)
+            sent += len(chunk)
+            if throttle:
+                time.sleep(len(chunk) / throttle)
 
     def video(self, item_id, rest, q):
         if item_id not in STATE["items"]:

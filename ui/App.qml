@@ -83,7 +83,7 @@ Item {
   }
 
   // Handles for the off-screen UI tests.
-  readonly property var testHooks: ({ confirm: confirmDialog, menu: menu, player: player, toast: toast,
+  readonly property var testHooks: ({ confirm: confirmDialog, menu: menu, player: player, toast: toast, status: statusBar,
     content: contentLoader, setup: setupLoader, settings: settingsLoader, window: window })
 
   function requestClose() {
@@ -300,6 +300,12 @@ Item {
     case "playMpv": if (target) playInMpv(target, {}); return
     case "watched": if (target) toggleWatched(target); return
     case "favorite": if (target) toggleFavorite(target); return
+    case "download":
+      if (target && Format.isPlayable(target)) {
+        var at = typeof item.currentAnchor === "function" ? item.currentAnchor() : null
+        downloadAction(target, at || contentLoader)
+      }
+      return
     case "menu":
       if (!target) return
       var anchor = typeof item.currentAnchor === "function" ? item.currentAnchor() : null
@@ -463,6 +469,75 @@ Item {
     })
   }
 
+  // ---------------------------------------------------------------- downloads
+
+  function startDownload(item) {
+    service.call("downloads.add", { id: item.id }, function(r, e) {
+      if (e) { toast.show(e.message, { tone: "error" }); return }
+      if (r.state === "done") toast.show(Format.cardTitle(item) + " is already downloaded")
+      else toast.show("Downloading " + Format.cardTitle(item) + (item.type === "Episode" ? " " + Format.episodeCode(item) : "") + " to " + root.service.downloadsRoot)
+    })
+  }
+
+  function downloadSeason(seriesId, season, count) {
+    service.call("downloads.addSeason", { seriesId: seriesId, seasonId: season.id }, function(r, e) {
+      if (e) { toast.show(e.message, { tone: "error" }); return }
+      toast.show(r.added > 0 ? "Downloading " + Format.count(r.added, "episode", "episodes") + " of " + season.name
+        : "Every episode of " + season.name + " is downloaded or on its way")
+    })
+  }
+
+  function downloadCall(method, item, done) {
+    service.call(method, { id: item.id }, function(r, e) {
+      if (e) toast.show(e.message, { tone: "error" })
+      else if (typeof done === "function") done(r)
+    })
+  }
+
+  // What the download button does, by where the download is.
+  function downloadAction(item, anchor) {
+    var e = service.downloadOf(item.id)
+    if (!e) { startDownload(item); return }
+    switch (e.state) {
+    case "done":
+      confirmDeleteDownload(item, e)
+      return
+    case "downloading":
+    case "queued":
+      showMenu([{ id: "pause", label: "Pause download", icon: "pause" },
+                { id: "cancel", label: "Cancel download", icon: "close", danger: true }], anchor, function(id) {
+        root.downloadCall(id === "pause" ? "downloads.pause" : "downloads.cancel", item)
+      })
+      return
+    case "paused":
+    case "failed":
+      showMenu([{ id: "resume", label: e.state === "failed" ? "Try again" : "Resume download", icon: "download" },
+                { id: "cancel", label: "Cancel download", icon: "close", danger: true }], anchor, function(id) {
+        root.downloadCall(id === "resume" ? "downloads.resume" : "downloads.cancel", item)
+      })
+      return
+    case "missing":
+      showMenu([{ id: "again", label: "Download again", icon: "download" },
+                { id: "forget", label: "Remove from downloads", icon: "trash" }], anchor, function(id) {
+        if (id === "again") root.startDownload(item)
+        else root.downloadCall("downloads.remove", item)
+      })
+      return
+    }
+  }
+
+  function confirmDeleteDownload(item, entry) {
+    var name = Format.cardTitle(item) + (item.type === "Episode" ? " " + Format.episodeCode(item) : "")
+    confirmDialog.ask({
+      title: "Delete download?",
+      message: "Move " + name + " (" + Format.bytes(entry.size) + ") to the trash? It stays on your Jellyfin server, and you can put the file back from the trash in Files.",
+      confirmText: "Move to trash",
+      onConfirm: function() {
+        root.downloadCall("downloads.remove", item, function() { toast.show("Moved " + name + " to the trash") })
+      }
+    })
+  }
+
   // The same actions on every card, wherever it is: right click, the "."
   // key, or the ⋯ button on a page.
   function showItemMenu(item, anchor, x, y) {
@@ -482,6 +557,20 @@ Item {
     var fav = item.user && item.user.favorite
     items.push({ id: "favorite", label: fav ? "Remove from favourites" : "Add to favourites", icon: fav ? "favorite" : "favoriteOn", shortcut: "f" })
     if (progress) items.push({ id: "clearResume", label: "Remove from Continue watching", icon: "close" })
+    if (Format.isPlayable(item)) {
+      var dl = service.downloadOf(item.id)
+      var state = dl ? dl.state : "none"
+      items.push({ id: "download", icon: state === "done" ? "trash" : state === "paused" ? "pause" : "download", shortcut: "D",
+        label: state === "done" ? "Delete download..." : state === "downloading" || state === "queued" ? "Pause or cancel the download..."
+          : state === "paused" || state === "failed" ? "Resume or cancel the download..." : state === "missing" ? "Download again..." : "Download",
+        danger: state === "done" })
+    }
+    // A show's page offers its chosen season.
+    var details = page && page.kind === "details" ? view() : null
+    if (details && details.currentSeason && (item.type === "Series" || item.type === "Episode") && details.seriesId) {
+      var season = details.currentSeason
+      items.push({ id: "downloadSeason", label: "Download " + season.name + (details.episodes.length ? " (" + Format.count(details.episodes.length, "episode", "episodes") + ")" : ""), icon: "download" })
+    }
     showMenu(items, anchor, function(id) {
       switch (id) {
       case "play": root.playItem(item, { restart: false }); break
@@ -492,6 +581,8 @@ Item {
       case "watched": root.toggleWatched(item); break
       case "favorite": root.toggleFavorite(item); break
       case "clearResume": root.clearResume(item); break
+      case "download": root.downloadAction(item, anchor); break
+      case "downloadSeason": root.downloadSeason(details.seriesId, details.currentSeason, details.episodes.length); break
       }
     }, x, y)
   }
@@ -788,10 +879,17 @@ Item {
       height: visible ? implicitHeight : 0
       context: root.keyContext
       sidebarCollapsed: root.sidebarCollapsed
-      leftIcon: !root.service ? "" : root.service.externalPlayback ? "external" : root.service.serverError ? "cloudOff" : "server"
+      leftIcon: !root.service ? "" : root.service.activeDownload ? "download" : root.service.externalPlayback ? "external" : root.service.serverError ? "cloudOff" : "server"
       leftAttention: !!root.service && root.service.serverError !== ""
-      leftText: !root.service ? "" : root.service.externalPlayback ? "Playing in mpv"
-        : root.service.serverError ? "Offline" : root.service.serverName
+      leftText: {
+        var s = root.service
+        if (!s) return ""
+        var d = s.activeDownload
+        if (d) return "Downloading " + Format.cardTitle(d.card) + (d.card.type === "Episode" ? " " + Format.episodeCode(d.card) : "")
+          + " · " + Format.downloadLine(d) + (s.downloadsWaiting > 1 ? " · " + (s.downloadsWaiting - 1) + " waiting" : "")
+        if (s.externalPlayback) return "Playing in mpv"
+        return s.serverError ? "Offline" : s.serverName
+      }
       middleText: {
         if (player.active && player.item) return Format.cardTitle(player.item) + (player.item.type === "Episode" ? " " + Format.episodeCode(player.item) : "")
         return contentLoader.item && contentLoader.item.statusText ? contentLoader.item.statusText : ""
@@ -859,6 +957,7 @@ Item {
       onToggleFavorite: function(item) { root.toggleFavorite(item) }
       onPlayInMpv: function(item, options) { root.playInMpv(item, options) }
       onShowMenu: function(items, anchor, handler) { root.showMenu(items, anchor, handler) }
+      onDownloadClicked: function(item, anchor) { root.downloadAction(item, anchor) }
     }
   }
 

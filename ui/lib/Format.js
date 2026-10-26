@@ -143,6 +143,21 @@ function bytes(n) {
   return (n >= 100 ? Math.round(n) : n.toFixed(1)) + " " + units[i]
 }
 
+// "34% · 11 MB/s · 6 min left" for a download on its way.
+function downloadLine(entry) {
+  if (!entry) return ""
+  var parts = []
+  if (entry.size > 0) parts.push(Math.floor(entry.bytes / entry.size * 100) + "%")
+  if (entry.speed > 0) {
+    parts.push(bytes(entry.speed) + "/s")
+    if (entry.size > entry.bytes) {
+      var left = (entry.size - entry.bytes) / entry.speed
+      parts.push(left < 90 ? Math.max(1, Math.round(left)) + " s left" : left < 5400 ? Math.round(left / 60) + " min left" : (left / 3600).toFixed(1) + " h left")
+    }
+  }
+  return parts.join(" · ")
+}
+
 function bitrate(bps) {
   var n = Number(bps || 0)
   if (n <= 0) return ""

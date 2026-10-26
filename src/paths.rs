@@ -65,6 +65,29 @@ impl Paths {
         }
     }
 
+    /// The list of downloads (the files themselves live in the download folder).
+    pub fn downloads_index(&self) -> PathBuf {
+        self.data_dir.join("downloads.json")
+    }
+
+    /// Where downloads go unless Settings says otherwise: an Omafin folder
+    /// in the desktop's Videos folder. A test (OMAFIN_HOME) keeps them in
+    /// its own folder, never the real one.
+    pub fn default_downloads(&self) -> PathBuf {
+        if let Some(root) = std::env::var_os("OMAFIN_HOME") {
+            return PathBuf::from(root).join("videos").join("Omafin");
+        }
+        let videos = std::process::Command::new("xdg-user-dir")
+            .arg("VIDEOS")
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()
+            .map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim()))
+            .filter(|p| p.is_absolute() && p != &home())
+            .unwrap_or_else(|| home().join("Videos"));
+        videos.join("Omafin")
+    }
+
     pub fn media_cache(&self) -> PathBuf {
         self.cache_dir.join("media")
     }
@@ -96,6 +119,18 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         let _ = fs::remove_file(&tmp);
     }
     result
+}
+
+/// Expand a leading `~/` the way a person typing a folder expects.
+pub fn expand_home(raw: &str) -> PathBuf {
+    let trimmed = raw.trim();
+    if trimmed == "~" {
+        return home();
+    }
+    if let Some(rest) = trimmed.strip_prefix("~/") {
+        return home().join(rest);
+    }
+    PathBuf::from(trimmed)
 }
 
 #[cfg(test)]

@@ -135,6 +135,7 @@ Item {
     onNotification: function(method, params) {
       if (method === "server.changed") root.refreshServer()
       else if (method === "playback.changed") root.playbackChanged(params)
+      else if (method === "downloads.changed") root.downloadChanged(params)
     }
   }
   readonly property bool ready: rustBackend.ready
@@ -145,7 +146,10 @@ Item {
     rustBackend.call(method, params || {}, callback)
   }
 
-  onReadyChanged: if (ready) refreshServer()
+  onReadyChanged: if (ready) {
+    refreshServer()
+    loadDownloads()
+  }
 
   // ---------------------------------------------------------------- settings
 
@@ -266,6 +270,54 @@ Item {
       libraryChanged()
       playbackFinished(params)
     }
+  }
+
+  // ---------------------------------------------------------------- downloads
+
+  // Every download by item id, kept current by the backend's events.
+  property var downloads: ({})
+  property string downloadsRootFull: ""
+  // The folder as people write it: ~ for the home folder.
+  readonly property string downloadsRoot: {
+    var home = String(Quickshell.env("HOME") || "")
+    return home && downloadsRootFull.indexOf(home + "/") === 0 ? "~" + downloadsRootFull.slice(home.length) : downloadsRootFull
+  }
+  property real downloadsFree: 0
+  readonly property var downloadList: Object.keys(downloads).map(function(k) { return downloads[k] })
+  readonly property var activeDownload: downloadList.filter(function(d) { return d.state === "downloading" })[0] || null
+  readonly property int downloadsWaiting: downloadList.filter(function(d) { return d.state === "queued" || d.state === "downloading" }).length
+  readonly property int downloadsDone: downloadList.filter(function(d) { return d.state === "done" }).length
+
+  function loadDownloads() {
+    call("downloads.list", {}, function(result, error) {
+      if (error) return
+      var map = {}
+      for (var i = 0; i < result.entries.length; i++) map[result.entries[i].id] = result.entries[i]
+      root.downloads = map
+      root.downloadsRootFull = String(result.root || "")
+      root.downloadsFree = Number(result.free || 0)
+    })
+  }
+
+  function downloadChanged(params) {
+    if (!params) return
+    var next = Object.assign({}, downloads)
+    if (params.removed) delete next[params.removed]
+    else if (params.entry && params.entry.id) {
+      var before = downloads[params.entry.id]
+      next[params.entry.id] = params.entry
+      if (params.entry.state === "done" && before && before.state !== "done")
+        notify("Downloaded " + Format.cardTitle(params.entry.card), "Ready to watch, even offline")
+    }
+    downloads = next
+  }
+
+  function notify(title, body) {
+    Quickshell.execDetached(["notify-send", "--app-name=Omafin", "--icon=multimedia-video-player", "--", title, body])
+  }
+
+  function downloadOf(id) {
+    return id && downloads[id] ? downloads[id] : null
   }
 
   // ---------------------------------------------------------------- media

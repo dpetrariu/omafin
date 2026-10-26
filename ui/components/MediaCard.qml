@@ -123,6 +123,26 @@ Item {
       }
     }
 
+    // Downloaded, or on its way: an arrow in a circle, bottom right.
+    Rectangle {
+      readonly property var dl: root.item ? root.service.downloadOf(root.item.id) : null
+      visible: !!dl && (dl.state === "done" || dl.state === "downloading" || dl.state === "queued")
+      anchors { right: parent.right; bottom: parent.bottom; margins: root.theme.space(6) }
+      anchors.bottomMargin: root.theme.space(root.progress > 0 ? 12 : 6)
+      width: root.theme.space(22)
+      height: width
+      radius: width / 2
+      color: dl && dl.state === "done" ? root.theme.accent : Qt.rgba(0, 0, 0, 0.55)
+      Glyph {
+        anchors.centerIn: parent
+        optical: true
+        name: "download"
+        size: root.theme.small + 1
+        color: parent.dl && parent.dl.state === "done" ? root.theme.background : "white"
+        font.family: root.theme.font
+      }
+    }
+
     Rectangle {
       visible: !!root.item && !!root.item.user && root.item.user.favorite === true
       anchors { left: parent.left; bottom: parent.bottom; margins: root.theme.space(6) }

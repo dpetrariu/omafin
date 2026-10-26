@@ -4,9 +4,9 @@ Omafin is a Jellyfin client built as an Omarchy shell plugin, following the stru
 
 ## Shape of the code
 
-- `src/` — Rust backend, `omafin serve`, JSON-RPC 2.0 over stdin/stdout (one JSON object per line). `methods.rs` is the only method table; `library.rs` library calls and card shaping; `playback.rs` PlaybackInfo, reports and mpv; `media.rs` the token-guarded 127.0.0.1 media proxy; `jellyfin/` the HTTP client and the device profile.
+- `src/` — Rust backend, `omafin serve`, JSON-RPC 2.0 over stdin/stdout (one JSON object per line). `methods.rs` is the only method table; `library.rs` library calls and card shaping; `playback.rs` PlaybackInfo, reports and mpv; `media.rs` the token-guarded 127.0.0.1 media proxy; `downloads.rs` the download queue, resume, metadata and trash; `jellyfin/` the HTTP client and the device profile.
 - `ui/` — QML loaded by the Omarchy shell (Quickshell). `Service.qml` lives as long as the shell and owns the backend and shared state; `App.qml` is the window and owns navigation, key context, the player and every action; `views/` draw and report; `components/` are reusable; `lib/*.js` and `keys/Keymap.js` hold testable logic.
-- `tests/` — `mock_jellyfin.py` (in-memory Jellyfin, `--seed` for a small library, `--media` for a real test video), `backend_e2e.py`, `ui_e2e.py` (the real window off-screen), `fetch_e2e.py`, `ui_logic.js`, `fakebin/mpv` (a stand-in mpv), and `tests/ui/shell.qml`, a stand-in shell for the UI tests.
+- `tests/` — `mock_jellyfin.py` (in-memory Jellyfin, `--seed` for a small library, `--media` for a real test video, `--big` for 300 films; `/_downloads` throttles a download, drops it partway or changes the file), `backend_e2e.py`, `downloads_e2e.py`, `ui_e2e.py` (the real window off-screen), `fetch_e2e.py`, `ui_logic.js`, `fakebin/mpv` (a stand-in mpv), and `tests/ui/shell.qml`, a stand-in shell for the UI tests.
 
 ## Rules that protect people's libraries
 
@@ -14,7 +14,8 @@ Omafin is a Jellyfin client built as an Omarchy shell plugin, following the stru
 - **Never play anything from a window or backend connected to a real server** in a test: the window reports playback as soon as it starts. Drive a real-server window only with `omarchy-shell shell call omafin navigate <id>`, which refuses play, marks and anything else that changes state.
 - **Do not screenshot or drive the person's desktop while they are using it.** Prefer `tests/ui_e2e.py`, which renders off-screen.
 - The session token never reaches QML, a URL QML sees, a playlist, or mpv's command line: the proxy adds the header and strips `ApiKey` from what the server hands back (`playback::strip_token`, `media::clean_playlist`). Keep the tests that assert this.
-- Test processes get their own `OMAFIN_HOME` (config, data, cache, and no keyring). Never run `omafin serve` against the real config in a test.
+- Test processes get their own `OMAFIN_HOME` (config, data, cache, downloads in `$OMAFIN_HOME/videos`, and no keyring) and their own `XDG_DATA_HOME` (the desktop trash). Never run `omafin serve` against the real config in a test, and never let a test remove a download without a sandboxed `XDG_DATA_HOME`.
+- Downloads never delete a person's files: removing one moves it to the desktop trash (refusing rather than copying across drives), cancelling removes only the `.part` file Omafin wrote, and a missing file counts as gone only when `try_exists() == Ok(false)` (an unmounted drive is not "deleted"). Jellyfin sends no ETag and ignores If-Range, so a resume checks size and Last-Modified itself; keep the tests in `downloads_e2e.py` that cover dropped connections, restarts and changed files.
 - Keys that change the library never auto-repeat (`changes: true` in `Keymap.js`). Marks offer Undo; undoing "watched" restores the resume position.
 
 ## Development loop
@@ -31,6 +32,7 @@ Rust comes from mise: prefix cargo with `mise exec rust@latest cmake@latest --` 
 
 - **Look at the screenshots** the UI test leaves in `$OMAFIN_UI_SHOTS`; passing assertions do not prove a view looks right. The off-screen platform does not draw video frames, so the player shows black there; check real playback by hand.
 - After a UI run, read the harness log (`/tmp/omafin-ui-*/qs.log`) and fix anything mentioning `omafin` — `ui_e2e.py` fails on TypeError, ReferenceError, "Unable to assign", "Cannot assign" and binding loops.
+- Icons in round buttons are centred by a measured table in `ui/lib/Icons.js`; after adding an icon (or if the desktop font changes) run `python3 tools/icon_optics.py` to measure it.
 - `qmllint -I /usr/lib/qt6/qml <file>` catches syntax errors before a slow UI run; unresolved `qs.*` imports are expected noise.
 - The test hook `js` wraps its argument in `return (…)`: chain statements with commas, not semicolons.
 

@@ -83,7 +83,12 @@ var GLYPHS = {
   tag: 0xF04FC,           // tag-outline
   eye: 0xF06D0,           // eye-outline
   eyeOff: 0xF06D1,        // eye-off-outline
-  circle: 0xF0766         // circle-outline
+  circle: 0xF0766,        // circle-outline
+  download: 0xF0B8F,      // download-outline
+  trash: 0xF0A7A,         // trash-can-outline
+  downloaded: 0xF1465,    // download-circle-outline
+  error: 0xF05D6,         // alert-circle-outline
+  disk: 0xF02CA           // harddisk
 }
 
 // Where each icon's drawn shape really is, measured from the font
@@ -170,7 +175,12 @@ var OPTICAL = {
   tag: [0.0657, 0.4105],
   eye: [0.1587, 0.3609],
   eyeOff: [0.1517, 0.3922],
-  circle: [0.1149, 0.3609]
+  circle: [0.1149, 0.3609],
+  download: [0.0001, 0.3291],
+  trash: [0.0323, 0.3669],
+  downloaded: [0.1153, 0.3584],
+  error: [0.1157, 0.3623],
+  disk: [0.0387, 0.3263]
 }
 
 function optical(name) {

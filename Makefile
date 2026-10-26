@@ -2,7 +2,7 @@
 CARGO ?= cargo
 BIN := bin/omafin
 
-.PHONY: build install link test test-rust test-backend test-ui test-fetch lint clean
+.PHONY: build install link test test-rust test-backend test-downloads test-ui test-fetch lint clean
 
 build:
 	$(CARGO) build --release --locked
@@ -16,7 +16,7 @@ install: build
 link: install
 	./scripts/link-plugin.sh
 
-test: test-rust test-backend test-ui test-fetch lint
+test: test-rust test-backend test-downloads test-ui test-fetch lint
 
 test-rust:
 	$(CARGO) test --locked
@@ -26,6 +26,12 @@ test-rust:
 test-backend:
 	$(CARGO) build --locked
 	python3 tests/backend_e2e.py target/debug/omafin
+
+# Downloads against the mock: whole files, dropped connections, restarts,
+# files changed on the server, pause/cancel, deleted files, trash, seasons.
+test-downloads:
+	$(CARGO) build --locked
+	python3 tests/downloads_e2e.py target/debug/omafin
 
 # Drives the real window off-screen (QT_QPA_PLATFORM=offscreen) against the
 # seeded mock. Set OMAFIN_UI_SHOTS=/some/dir to keep the screenshots.

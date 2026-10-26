@@ -26,6 +26,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Backend end-to-end
         run: python3 tests/backend_e2e.py target/debug/omafin
+      - name: Downloads end-to-end
+        run: python3 tests/downloads_e2e.py target/debug/omafin
       - name: UI logic
         run: node tests/ui_logic.js
       - name: Shell scripts parse

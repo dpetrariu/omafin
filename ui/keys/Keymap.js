@@ -37,6 +37,7 @@ var BINDINGS = [
   { id: "watched", changes: true, keys: ["w"], contexts: BROWSE, group: "Watching", label: "Mark watched or unwatched",
     hintKey: "w", hint: { browse: "watched" } },
   { id: "favorite", changes: true, keys: ["f"], contexts: BROWSE, group: "Watching", label: "Favourite or unfavourite" },
+  { id: "download", changes: true, keys: ["Shift+D"], contexts: BROWSE, group: "Watching", label: "Download, or the download's actions" },
   { id: "menu", keys: ["."], contexts: BROWSE, group: "Watching", label: "More actions..." },
 
   // The player

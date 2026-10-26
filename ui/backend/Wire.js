@@ -18,7 +18,7 @@ function response(value) {
 }
 
 // Only the backend's declared events may arrive without a request.
-var EVENTS = ["server.changed", "playback.changed"]
+var EVENTS = ["server.changed", "playback.changed", "downloads.changed"]
 
 function notification(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null
