@@ -1,34 +1,42 @@
 import QtQuick
 
-// Scrolling with momentum, as on a Mac, for a Flickable. Qt's own wheel
-// handling moves a few lines per event and stops dead, and a sideways row
-// inside a page turns vertical wheel turns into sideways scrolling, so this
-// sits over the Flickable and takes the wheel itself.
+// Scrolling with momentum, as on a Mac, for a Flickable, up and down or
+// (`horizontal`) sideways. Qt's own wheel handling moves a few lines per
+// event and stops dead, and a sideways row inside a page turns vertical
+// wheel turns into sideways scrolling, so this sits over the Flickable and
+// takes the wheel itself.
 //
-// - A touchpad: the page follows the fingers while they are down, then
+// - A touchpad: the content follows the fingers while they are down, then
 //   coasts from the speed they let go at and slows down smoothly. Touching
-//   again catches it. The touchpad reports begin / update / end phases (the
-//   VM passes them through; it adds no momentum of its own).
+//   again catches it. The touchpad reports begin / update / end phases.
 // - A mouse wheel: each notch adds speed rather than jumping, so one notch
 //   glides about `notch` pixels and a fast spin builds up and goes far.
 // - The ends stretch like a rubber band: a glide carries on a little past
-//   the top or bottom and springs back; fingers pulling past an end meet
+//   the start or end and springs back; fingers pulling past an end meet
 //   growing resistance. The end of a page still loading does not stretch.
-// - Sideways input (a horizontal swipe, or Shift with the wheel) goes to
-//   `sideways(dx, y)` when set, directly.
+// - A page with sideways rows (`rowAt(y)` returns the row's own scroller):
+//   each touchpad gesture is decided by its first movement. Mostly
+//   sideways, the whole gesture goes to the row under the pointer, which
+//   follows, coasts and stretches the same way; otherwise the page scrolls.
+//   Shift with the wheel, or a sideways wheel, goes to the row too.
 //
 // It takes no clicks and no hover, so everything under it works as before.
+// A row's scroller is fed by its page and takes no wheel itself
+// (`takesWheel: false`).
 MouseArea {
   id: root
 
   property Flickable flickable: null
+  property bool horizontal: false
+  property bool takesWheel: true
   // How far one wheel notch glides, in pixels.
   property real notch: 220
-  property var sideways: null
+  // For a page: the scroller of the sideways row at this y, or null.
+  property var rowAt: null
   // More is still loading below the end: a glide that gets there waits for
   // it (slowing as it would) instead of stopping as if at the bottom.
   property bool moreBelow: false
-  // How far the page may sit from this scroller's own position before it
+  // How far the content may sit from this scroller's own position before it
   // counts as moved by something else: the view rounds positions its own
   // way, and a pixel of difference must not end a glide.
   readonly property real slack: 1.5
@@ -39,21 +47,18 @@ MouseArea {
   property real fingerGain: 1.25
   readonly property real maxSpeed: 9000
 
-  // True while the fingers move or the page coasts; a page turns off its
+  // True while the fingers move or the content coasts; a page turns off its
   // keyboard glide meanwhile.
   readonly property bool active: fingersDown || frame.running || bouncing
   property bool fingersDown: false
   property bool coasting: false
-  property real velocity: 0          // px/s, positive scrolls down
-  // Where the fingers or the glide say the page should be.
+  property real velocity: 0          // px/s, positive scrolls down (or right)
+  // Where the fingers or the glide say the content should be.
   property real target: 0
-  // Where the page really is. It follows `target` within about a frame, so
-  // touchpad events that arrive unevenly (two in one frame, none in the
-  // next) still move the page evenly.
+  // Where the content really is. It follows `target` within about a frame,
+  // so touchpad events that arrive unevenly (two in one frame, none in the
+  // next) still move it evenly.
   property real exact: 0
-  // The ends stretch like a rubber band: a glide carries a little past the
-  // top or bottom and springs back, and fingers pulling past an end meet
-  // more resistance the further they go.
   property bool bouncing: false
   property real bounceVelocity: 0
   property real edge: 0
@@ -66,9 +71,13 @@ MouseArea {
   readonly property real maxBounceSpeed: 3500
   // The furthest the last bounce stretched, for the tests.
   property real peakStretch: 0
-  // How quickly the page catches up with the fingers, in seconds.
+  // How quickly the content catches up with the fingers, in seconds.
   readonly property real follow: 0.012
   property double lastEvent: 0
+  // A page's current touchpad gesture: "" undecided, "own", or "row".
+  property string gesture: ""
+  property var gestureRow: null
+  property double gestureStart: 0
 
   // Before every wheel step, for a page that animates its keyboard moves.
   signal scrolled()
@@ -76,10 +85,24 @@ MouseArea {
   anchors.fill: flickable
   acceptedButtons: Qt.NoButton
   hoverEnabled: false
+  enabled: takesWheel
   z: 1000
 
+  // ---------------------------------------------------------------- the axis
+
+  function pos() {
+    return horizontal ? flickable.contentX : flickable.contentY
+  }
+  function setPos(v) {
+    if (horizontal) flickable.contentX = v
+    else flickable.contentY = v
+  }
   function bounds() {
     var f = flickable
+    if (horizontal) {
+      var start = f.originX - f.leftMargin
+      return { top: start, bottom: Math.max(start, f.originX + f.contentWidth + f.rightMargin - f.width) }
+    }
     var top = f.originY - f.topMargin
     return { top: top, bottom: Math.max(top, f.originY + f.contentHeight + f.bottomMargin - f.height) }
   }
@@ -89,16 +112,17 @@ MouseArea {
     return Math.max(b.top, Math.min(b.bottom, y))
   }
 
-  // How far past an end a position is: negative above the top, positive
-  // below the bottom, 0 inside.
+  // How far past an end a position is: negative before the start, positive
+  // past the end, 0 inside.
   function overscroll(y) {
     var b = bounds()
     return y < b.top ? y - b.top : y > b.bottom ? y - b.bottom : 0
   }
 
-  // How far the page stretches for fingers `over` pixels past an end.
+  // How far the content stretches for fingers `over` pixels past an end.
   function rubber(over) {
-    var d = Math.max(200, (flickable ? flickable.height : 600) * 0.5)
+    var span = flickable ? (horizontal ? flickable.width : flickable.height) : 600
+    var d = Math.max(200, span * 0.5)
     return (1 - 1 / (over * 0.55 / d + 1)) * d
   }
 
@@ -118,63 +142,75 @@ MouseArea {
     return y
   }
 
-  // Where the page should be kept when its items change underneath: this
+  // Where the content should be kept when its items change underneath: this
   // scroller's own position while it moves, else what the caller saw.
   function position(fallback) {
     return active ? snap(exact) : fallback
   }
 
-  // Something else moved the page (a key, a new page of items, a drag):
-  // carry on from where it is.
+  // Something else moved the content (a key, new items, a drag): carry on
+  // from where it is.
   function sync() {
     var f = flickable
     if (!f) return
     if (!frame.running) {
-      exact = target = fingerRaw = f.contentY
+      exact = target = fingerRaw = pos()
       return
     }
-    if (Math.abs(f.contentY - snap(exact)) > slack) {
-      var shift = f.contentY - exact
-      exact = f.contentY
+    if (Math.abs(pos() - snap(exact)) > slack) {
+      var shift = pos() - exact
+      exact = pos()
       target = clamp(target + shift)
     }
   }
 
-  // Move by dy at once, for sideways-free direct moves.
+  // Move by dy at once.
   function scrollBy(dy) {
     stop()
     if (!flickable) return
     flickable.cancelFlick()
     sync()
     target = exact = clamp(exact + dy)
-    flickable.contentY = snap(exact)
+    setPos(snap(exact))
+  }
+
+  // Glide by about d pixels (the row's arrow buttons).
+  function glideBy(d) {
+    if (!flickable || d === 0) return
+    if (!frame.running) sync()
+    if (bouncing) { bouncing = false; exact = target = clamp(exact) }
+    velocity = d / glide
+    coasting = true
+    scrolled()
+    frame.running = true
   }
 
   // Keyboard moves, drags and new pages call this: the glide gives way,
-  // and the page stays where it is now.
+  // and the content stays where it is now.
   function stop() {
     coasting = false
     velocity = 0
     bouncing = false
     bounceVelocity = 0
     frame.running = false
-    // Whatever takes over moves the page itself; never leave it stretched.
+    if (!flickable) return
+    // Whatever takes over moves the content itself; never leave it stretched.
     exact = clamp(exact)
     target = fingerRaw = exact
-    if (flickable && overscroll(flickable.contentY) !== 0) flickable.contentY = exact
+    if (overscroll(pos()) !== 0) setPos(exact)
   }
 
   // Every frame: a glide moves the target on and slows down, an end
-  // springs back, and the page eases toward the target.
+  // springs back, and the content eases toward the target.
   FrameAnimation {
     id: frame
     running: false
     onTriggered: {
       var f = root.flickable
       if (!f) { running = false; return }
-      if (!root.bouncing && root.overscroll(root.exact) === 0 && Math.abs(f.contentY - root.snap(root.exact)) > root.slack) {
+      if (!root.bouncing && root.overscroll(root.exact) === 0 && Math.abs(root.pos() - root.snap(root.exact)) > root.slack) {
         // Moved under us (a key, a drag): give way.
-        root.exact = root.target = root.fingerRaw = f.contentY
+        root.exact = root.target = root.fingerRaw = root.pos()
         root.coasting = false
         root.velocity = 0
       }
@@ -210,7 +246,7 @@ MouseArea {
           root.bouncing = false
         }
       } else if (!root.fingersDown && root.overscroll(root.exact) !== 0) {
-        // Let go with the page past an end: spring back.
+        // Let go with the content past an end: spring back.
         root.startBounce(root.clamp(root.exact), 0)
         root.target = root.exact
       } else {
@@ -218,7 +254,7 @@ MouseArea {
         var gap = root.target - root.exact
         root.exact = Math.abs(gap) < 0.25 ? root.target : root.exact + gap * (1 - Math.exp(-dt / root.follow))
       }
-      f.contentY = root.snap(root.exact)
+      root.setPos(root.snap(root.exact))
       if (!root.coasting && !root.bouncing && !root.fingersDown && root.exact === root.target) running = false
     }
   }
@@ -253,22 +289,42 @@ MouseArea {
 
   function release(now) {
     fingersDown = false
-    // Fingers that stopped before lifting leave nothing to coast on, and a
-    // page let go past an end only springs back.
+    // Fingers that stopped before lifting leave nothing to coast on, and
+    // content let go past an end only springs back.
     if (now - lastEvent > 80 || overscroll(target) !== 0) velocity = 0
     coasting = Math.abs(velocity) > 40
     frame.running = true
   }
 
-  // One wheel event, by its parts, so the UI tests can send one too.
-  // `phase` is Qt's: 0 none (a mouse wheel), 1 begin, 2 update, 3 end, 4 momentum.
-  // `now` (ms) is for the tests; it defaults to the clock.
+  // One wheel event, by its parts, so the UI tests (and a page, for its
+  // rows) can send one too. `phase` is Qt's: 0 none (a mouse wheel), 1 begin,
+  // 2 update, 3 end, 4 momentum. `now` (ms) defaults to the clock.
   function handle(angleX, angleY, pixelX, pixelY, shift, y, phase, now) {
     scrolled()
     now = now === undefined ? Date.now() : now
     phase = phase || 0
-    if (phase === Qt.ScrollBegin) { begin(now); return }
-    if (phase === Qt.ScrollEnd) { release(now); return }
+    var rows = typeof rowAt === "function"
+
+    if (phase === Qt.ScrollBegin) {
+      // Undecided until the fingers move.
+      gesture = ""
+      gestureRow = null
+      gestureStart = now
+      begin(now)
+      return
+    }
+    if (phase === Qt.ScrollEnd) {
+      if (gesture === "row" && gestureRow) {
+        gestureRow.handle(0, 0, 0, 0, false, y, Qt.ScrollEnd, now)
+        // The page's own fingers did not move.
+        velocity = 0
+      }
+      gesture = ""
+      gestureRow = null
+      release(now)
+      return
+    }
+
     var touchpad = pixelX !== 0 || pixelY !== 0 || phase === Qt.ScrollUpdate || phase === Qt.ScrollMomentum
     var dx = touchpad ? pixelX : angleX / 120 * notch
     var dy = touchpad ? pixelY : angleY / 120 * notch
@@ -277,14 +333,36 @@ MouseArea {
       dx = dx !== 0 ? dx : dy
       dy = 0
     }
-    if (Math.abs(dx) > Math.abs(dy)) {
-      if (typeof sideways === "function") sideways(touchpad ? -dx * fingerGain : -dx, y)
-      return
+    var along = horizontal ? dx : dy
+    var across = horizontal ? dy : dx
+
+    // A page hands sideways input to the row under the pointer.
+    if (rows && !horizontal) {
+      if (phase === Qt.ScrollUpdate && gesture === "") {
+        if (dx === 0 && dy === 0) return
+        var row = Math.abs(dx) > Math.abs(dy) ? rowAt(y) : null
+        if (row) {
+          gesture = "row"
+          gestureRow = row
+          row.handle(0, 0, 0, 0, false, y, Qt.ScrollBegin, gestureStart)
+        } else {
+          gesture = "own"
+        }
+      }
+      if (gesture === "row" && gestureRow) {
+        gestureRow.handle(angleX, angleY, pixelX, pixelY, false, y, phase, now)
+        return
+      }
+      if (!touchpad && Math.abs(across) > Math.abs(along)) {
+        var wheelRow = rowAt(y)
+        if (wheelRow) wheelRow.handle(angleX, angleY, 0, 0, shift, y, 0, now)
+        return
+      }
     }
     if (touchpad) {
       // Follow the fingers, and remember how fast they went.
       if (!fingersDown && phase !== Qt.ScrollMomentum) begin(now)
-      var move = -dy * fingerGain
+      var move = -along * fingerGain
       if (flickable) flickable.cancelFlick()
       fingerRaw += move
       var over = overscroll(fingerRaw)
@@ -302,10 +380,12 @@ MouseArea {
       return
     }
     // A wheel notch: speed for a glide of about `notch` pixels, added to a
-    // glide already going the same way.
+    // glide already going the same way. Sideways notches on a scroller that
+    // does not go sideways do nothing.
+    if (along === 0 || Math.abs(across) > Math.abs(along)) return
     if (!frame.running) sync()
     if (bouncing) { bouncing = false; exact = target = clamp(exact) }
-    var push = -dy / glide
+    var push = -along / glide
     if (velocity !== 0 && (velocity > 0) !== (push > 0)) velocity = 0
     velocity = Math.max(-maxSpeed, Math.min(maxSpeed, velocity + push))
     lastEvent = now

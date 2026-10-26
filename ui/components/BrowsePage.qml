@@ -115,14 +115,16 @@ Item {
     id: wheel
     flickable: flick
     notch: root.theme.space(360)
-    // A sideways swipe scrolls the row under the pointer.
-    sideways: function(dx, y) {
+    // Sideways gestures go to the row under the pointer, which glides and
+    // stretches on its own.
+    rowAt: function(y) {
       for (var i = 0; i < repeater.count; i++) {
         var row = repeater.itemAt(i)
         if (!row) continue
         var p = row.mapToItem(root, 0, 0)
-        if (y >= p.y && y < p.y + row.height) { row.scrollBy(dx); return }
+        if (y >= p.y && y < p.y + row.height) return row.wheel
       }
+      return null
     }
   }
 

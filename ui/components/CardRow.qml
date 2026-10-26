@@ -62,16 +62,28 @@ Item {
   // How far the row is scrolled from its beginning (0 when not scrolled).
   readonly property real scrolledBy: list.contentX + list.leftMargin
   function scrollBy(dx) {
-    var end = Math.max(start, list.contentWidth - list.width + list.rightMargin)
-    list.cancelFlick()
-    list.contentX = Math.max(start, Math.min(end, list.contentX + dx))
+    rowWheel.scrollBy(dx)
     atStart = list.contentX <= start + 0.5
+  }
+
+  // Sideways scrolling with the same momentum and rubber band as the page.
+  // The page feeds it (sideways gestures over this row); it takes no wheel.
+  property alias wheel: rowWheel
+  WheelScroller {
+    id: rowWheel
+    flickable: list
+    horizontal: true
+    takesWheel: false
+    notch: root.cardWidth * 2
+    onScrolled: root.atStart = false
+    onActiveChanged: if (!active) root.atStart = list.contentX <= root.start + 0.5
   }
 
   width: parent ? parent.width : 0
   implicitHeight: heading.height + list.height + theme.space(6)
 
   function showCurrent() {
+    rowWheel.stop()
     list.positionViewAtIndex(currentIndex, ListView.Contain)
     atStart = list.contentX <= start + 0.5
   }
@@ -144,7 +156,7 @@ Item {
     y: list.y + (root.cardHeight - height) / 2 - root.theme.space(20)
     icon: "chevronLeft"
     tooltip: "Scroll left"
-    onClicked: root.scrollBy(-list.width * 0.6)
+    onClicked: rowWheel.glideBy(-list.width * 0.6)
   }
   IconButton {
     theme: root.theme
@@ -154,7 +166,7 @@ Item {
     y: list.y + (root.cardHeight - height) / 2 - root.theme.space(20)
     icon: "chevronRight"
     tooltip: "Scroll right"
-    onClicked: root.scrollBy(list.width * 0.6)
+    onClicked: rowWheel.glideBy(list.width * 0.6)
   }
   HoverHandler { id: hover }
 }

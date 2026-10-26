@@ -147,6 +147,33 @@ def main():
         assert abs(h.value(page + ".flickable.contentY") - y0) < notch * 0.03 + 2
         print("ok: wheel scrolling")
 
+        # A sideways flick over a row goes to that row: it follows, coasts and
+        # springs back from its start, while the page stays where it is.
+        ri = h.value(page + ".visibleRows.map(function(r) { return r.title }).indexOf('Recently added in Archive')")
+        assert ri >= 0
+        h.js(f"{page}.rowItem({ri}).scrollBy(0)")
+        h.js(f"{page}.wheel.scrollBy({page}.rowItem({ri}).mapToItem({page}.flickable.contentItem, 0, 0).y - 100 - {page}.flickable.contentY)")
+        time.sleep(0.5)
+        page_y = h.value(page + ".flickable.contentY")
+        row = f"{page}.rowItem({ri})"
+        ry = h.value(f"{row}.mapToItem({page}, 0, 120).y")
+        w = page + ".wheel"
+        h.js(f"({w}.handle(0, 0, 0, 0, false, {ry}, 1, 50000), " + ", ".join(f"{w}.handle(0, 0, -70, -2, false, {ry}, 2, {50000 + 16 * (i + 1)})" for i in range(6)) + f", {w}.handle(0, 0, 0, 0, false, {ry}, 3, 50100))")
+        time.sleep(2.0)
+        moved = h.value(f"{row}.scrolledBy")
+        assert moved > 6 * 70 * 1.25 + 300, ("the row did not coast", moved)
+        assert abs(h.value(page + ".flickable.contentY") - page_y) < 1, "the page moved with a sideways flick"
+        h.js(f"({w}.handle(0, 0, 0, 0, false, {ry}, 1, 60000), " + ", ".join(f"{w}.handle(0, 0, 90, 1, false, {ry}, 2, {60000 + 16 * (i + 1)})" for i in range(8)) + f", {w}.handle(0, 0, 0, 0, false, {ry}, 3, 60140))")
+        time.sleep(2.0)
+        assert h.value(f"{row}.wheel.peakStretch") > 10, h.value(f"{row}.wheel.peakStretch")
+        assert abs(h.value(f"{row}.scrolledBy")) < 0.5 and h.value(f"{row}.wheel.active") is False, "the row did not settle at its start"
+        h.js(f"{w}.handle(0, -120, 0, 0, true, {ry}, 0)")
+        time.sleep(1.5)
+        assert h.value(f"{row}.scrolledBy") > 200, "Shift+wheel did not glide the row"
+        h.js(f"{row}.scrollBy(-100000)")
+        h.js(f"{page}.wheel.scrollBy(-100000)")
+        print("ok: rows glide and stretch sideways")
+
         # The keyboard: down to Continue watching, w marks it watched, Undo.
         h.nav("down")
         target = h.value("app.view().currentTarget()")
