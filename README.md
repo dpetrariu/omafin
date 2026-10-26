@@ -2,6 +2,15 @@
 
 Your [Jellyfin](https://jellyfin.org) films and shows in a native Omarchy window. Omafin follows the active Omarchy theme, is keyboard-first, and lives in the shell like [Omamail](https://github.com/huacnlee/omamail) and [Omamich](https://github.com/dpetrariu/omamich): a service that keeps running, a bar icon, and a window you summon. Its layout and flow follow [Fladder](https://github.com/DonutWare/Fladder), the Jellyfin client most often praised for a simple, good-looking UI.
 
+![Omafin's home: Sintel in progress as the banner, then Continue watching and Next up](docs/images/home.webp)
+
+| | |
+|---|---|
+| ![A film's page: Spring, with Play, watched, favourite, download and mpv](docs/images/film.webp) | ![A show's page: Caminandes, with its episodes](docs/images/show.webp) |
+| ![The Movies library as a grid of posters](docs/images/library.webp) | |
+
+<sub>The library in these screenshots is the Blender Foundation's open movies (CC BY), served by Omafin's test server; see [the picture credits](docs/images/CREDITS.md).</sub>
+
 ## What it does
 
 - **Home** opens on what you are watching: a banner for the film or episode in progress (h and l step through them), then **Continue watching**, **Next up**, and **Recently added** in each library. It refreshes every two minutes while open, and after you watch something.
@@ -60,6 +69,13 @@ Scripts and keybindings can move around (never mark, play or change anything) ov
 make test        # Rust unit tests, the backend against a mock Jellyfin, the window off-screen, the release download, UI logic
 make install     # rebuild bin/omafin
 ./install.sh     # link this checkout into Omarchy (first time), then: omarchy restart shell after UI edits
+```
+
+The README's screenshots are taken off-screen against the mock server, serving the Blender open movies with their real pictures from Wikimedia Commons (licences checked, credits written):
+
+```bash
+python3 tools/showcase/fetch.py ~/.cache/omafin-showcase
+python3 tools/showcase/screenshots.py target/debug/omafin ~/.cache/omafin-showcase docs/images
 ```
 
 See `CLAUDE.md` for the working agreements and `docs/ARCHITECTURE.md` for how the pieces fit.

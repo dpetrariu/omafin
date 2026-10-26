@@ -1,0 +1,113 @@
+{
+  "about": "A library of the Blender Foundation's open movies, for screenshots. Every image is taken from Wikimedia Commons, which records its licence; fetch.py refuses any that is not CC BY, CC BY-SA, CC0 or public domain, and writes the credits. Years, running times and directors are the films' own; the summaries are written for Omafin. No ratings are given, since none would be ours to give.",
+  "films": [
+    {
+      "key": "elephants-dream", "name": "Elephants Dream", "year": 2006, "minutes": 11,
+      "genres": ["Animation", "Science Fiction"], "directors": ["Bassam Kurdali"],
+      "overview": "Old Proog leads young Emo through a vast, shifting machine that may exist only in Proog's mind. The first of the Blender open movies.",
+      "images": {
+        "Primary": {"file": "ElephantsDreamPoster.jpg"},
+        "Backdrop": {"file": "Elephants Dream s7 both.jpg"}
+      }
+    },
+    {
+      "key": "big-buck-bunny", "name": "Big Buck Bunny", "year": 2008, "minutes": 10,
+      "genres": ["Animation", "Comedy"], "directors": ["Sacha Goedegebure"],
+      "overview": "A gentle giant of a rabbit has his quiet day in the meadow ruined by three bullying rodents, and sets out to get even.",
+      "images": {
+        "Primary": {"file": "Big buck bunny poster big.jpg"},
+        "Backdrop": {"file": "Big.Buck.Bunny.-.Landscape.png"}
+      }
+    },
+    {
+      "key": "sintel", "name": "Sintel", "year": 2010, "minutes": 15,
+      "genres": ["Animation", "Fantasy", "Adventure"], "directors": ["Colin Levy"],
+      "overview": "A lone young woman searches the frozen wilds for the baby dragon she once rescued, raised and lost.",
+      "images": {
+        "Primary": {"file": "Sintel poster.jpg"},
+        "Backdrop": {"video": "Sintel movie 4K.webm", "at": 60}
+      }
+    },
+    {
+      "key": "tears-of-steel", "name": "Tears of Steel", "year": 2012, "minutes": 12,
+      "genres": ["Science Fiction"], "directors": ["Ian Hubert"],
+      "overview": "In a future Amsterdam, a band of scientists and fighters stage one moment from the past again, hoping to save the world from the robots.",
+      "images": {
+        "Primary": {"file": "Tos-poster.png"},
+        "Backdrop": {"video": "Tears of Steel 1080p.webm", "at": 200}
+      }
+    },
+    {
+      "key": "cosmos-laundromat", "name": "Cosmos Laundromat", "year": 2015, "minutes": 12,
+      "genres": ["Animation", "Comedy", "Fantasy"], "directors": ["Mathieu Auvray"],
+      "overview": "On a desolate island, a weary sheep called Franck meets a salesman who offers him the gift of a lifetime.",
+      "images": {
+        "Primary": {"file": "CosmosLaundromatPoster.jpg"},
+        "Backdrop": {"file": "Franck the caterpillar.jpg"}
+      }
+    },
+    {
+      "key": "spring", "name": "Spring", "year": 2019, "minutes": 8,
+      "genres": ["Animation", "Fantasy"], "directors": ["Andy Goralczyk"],
+      "overview": "A shepherd girl and her dog face the ancient spirits of the mountain to keep the cycle of life turning.",
+      "images": {
+        "Primary": {"file": "Spring2019PillarPosterBlender.jpg"},
+        "Backdrop": {"video": "Spring - Blender Open Movie.webm", "at": 100}
+      }
+    },
+    {
+      "key": "coffee-run", "name": "Coffee Run", "year": 2020, "minutes": 3,
+      "genres": ["Animation", "Drama"], "directors": ["Hjalti Hjálmarsson"],
+      "overview": "Fuelled by caffeine, a young woman runs through the bittersweet memories of her past.",
+      "images": {
+        "Primary": {"file": "Coffee Run - screenshot-Location 06 Wedding-Run 1.png", "gravity": "center"},
+        "Backdrop": {"file": "Coffee Run - screenshot-Location 06 Wedding-Run 1.png"}
+      }
+    },
+    {
+      "key": "sprite-fright", "name": "Sprite Fright", "year": 2021, "minutes": 10,
+      "genres": ["Animation", "Horror", "Comedy"], "directors": ["Matthew Luhn", "Hjalti Hjálmarsson"],
+      "overview": "Rowdy teenagers camping in a quiet forest find tiny mushroom sprites, who turn out to be far less harmless than they look.",
+      "images": {
+        "Primary": {"file": "Sprite Fright-movie poster.jpg"},
+        "Backdrop": {"video": "Sprite Fright - Blender Open Movie-full movie.webm", "at": 40}
+      }
+    },
+    {
+      "key": "charge", "name": "Charge", "year": 2022, "minutes": 4,
+      "genres": ["Animation", "Action"], "directors": ["Hjalti Hjálmarsson"],
+      "overview": "In a world short of power, an old man breaks into a guarded energy plant.",
+      "images": {
+        "Primary": {"file": "Charge-movie poster.jpg"},
+        "Backdrop": {"video": "Charge - Blender Open Movie-full movie.webm", "at": 170}
+      }
+    }
+  ],
+  "shows": [
+    {
+      "key": "caminandes", "name": "Caminandes", "year": 2013, "endYear": 2016,
+      "genres": ["Animation", "Comedy"], "directors": ["Pablo Vazquez"],
+      "overview": "Koro the llama keeps finding new ways to reach the greener grass of Patagonia, usually the wrong ones.",
+      "images": {
+        "Primary": {"file": "Caminandes gran dillama.png", "gravity": "center"},
+        "Backdrop": {"file": "Blender Foundation - Caminandes - Episode 3 - Llamigos - Riding mine cart with Koro and Oti while carrying a red grape.png"}
+      },
+      "episodes": [
+        {"key": "llama-drama", "name": "Llama Drama", "year": 2013, "minutes": 2,
+         "overview": "Koro wants to cross the road. The road has other ideas.",
+         "images": {"Primary": {"file": "Pablo Vazquez - Caminandes - Episode 1 - Llama Drama - Cover thumbnail.png"}}},
+        {"key": "gran-dillama", "name": "Gran Dillama", "year": 2013, "minutes": 3,
+         "overview": "The grass is greener on the far side of an electric fence.",
+         "images": {"Primary": {"file": "Blender Foundation - Caminandes - Episode 2 - Gran Dillama - Cover thumbnail.png"}}},
+        {"key": "llamigos", "name": "Llamigos", "year": 2016, "minutes": 3,
+         "overview": "Winter, one last berry, and a penguin called Oti who wants it too.",
+         "images": {"Primary": {"file": "Blender Foundation - Caminandes - Episode 3 - Llamigos - Cover thumbnail.png"}}}
+      ]
+    }
+  ],
+  "collections": [
+    {"key": "blender-open-movies", "name": "Blender open movies",
+     "images": {"Primary": {"file": "Big Buck Bunny loves Creative Commons.png", "gravity": "center"}},
+     "films": ["elephants-dream", "big-buck-bunny", "sintel", "tears-of-steel", "cosmos-laundromat", "spring", "coffee-run", "sprite-fright", "charge"]}
+  ]
+}

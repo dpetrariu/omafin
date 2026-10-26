@@ -6,7 +6,11 @@ server returns (checked with read-only calls), keeps watched marks,
 favourites, resume positions and playback reports in memory, and exposes
 them at GET /_state so tests can assert on what the window did.
 
-usage: mock_jellyfin.py PORT [--seed] [--media DIR]
+usage: mock_jellyfin.py PORT [--seed] [--media DIR] [--showcase DIR]
+
+--showcase DIR serves the Blender open movies, with their real pictures, in
+place of the test library: tools/showcase/fetch.py writes DIR. It is for
+screenshots (tools/showcase/screenshots.py); the tests use --seed.
 
 --media DIR holds test.mp4, test.ts and test.png (tests make them with
 ffmpeg); without it the stream endpoints answer with a few bytes.
@@ -43,6 +47,8 @@ STATE = {
     "downloads": [],    # each download request: item, range asked
 }
 MEDIA = {"dir": None}
+PICTURES = {}  # (item id, image type) -> file, for --showcase
+NAMES = {"server": "Mock Jellyfin", "user": "Daniel"}  # --showcase shows neutral ones
 
 
 def png(w, h, rgb):
@@ -171,6 +177,98 @@ def seed():
     add({"Id": box, "Name": "Sci-fi classics", "Type": "BoxSet", "IsFolder": True, "ParentId": VIEWS["boxsets"], "ChildCount": 2,
          "ImageTags": {"Primary": "bx"}})
     STATE["children"] = {box: [gid(101), gid(103)]}
+
+
+def seed_showcase(folder):
+    """The Blender Foundation's open movies, a show and a collection, with
+    their pictures from FOLDER, and a little viewing history so Home has
+    something to show."""
+    library = json.load(open(os.path.join(folder, "library.json")))
+    NAMES.update(server="Jellyfin", user="Demo")
+    for kind, vid in VIEWS.items():
+        add({"Id": vid, "Name": {"movies": "Movies", "tvshows": "TV Shows", "boxsets": "Collections"}[kind], "Type": "CollectionFolder",
+             "CollectionType": kind, "IsFolder": True, "ChildCount": 0})
+    people = {}
+
+    def credits(entry):
+        out = []
+        for name in entry.get("directors", []):
+            if name not in people:
+                people[name] = gid(5000 + len(people))
+                add({"Id": people[name], "Name": name, "Type": "Person", "IsFolder": False, "ImageTags": {}})
+            out.append({"Name": name, "Id": people[name], "Type": "Director"})
+        return out
+
+    def pictures(item_id, entry):
+        tags, backdrops = {}, []
+        for kind, rel in entry.get("imageFiles", {}).items():
+            path = os.path.join(folder, rel)
+            PICTURES[(item_id, kind)] = path
+            if kind == "Backdrop":
+                # Landscape cards ask for Thumb: the backdrop serves.
+                PICTURES.setdefault((item_id, "Thumb"), path)
+                tags["Thumb"] = "t" + item_id[-6:]
+                backdrops.append("b" + item_id[-6:])
+            else:
+                tags[kind] = kind[0].lower() + item_id[-6:]
+        return tags, backdrops
+
+    def sources(item_id, minutes):
+        """The test video's source, described as the 1080p file it stands for."""
+        source = video_source(item_id)
+        source[0]["MediaStreams"][0].update(Width=1920, Height=1080, DisplayTitle="1080p H264 SDR")
+        source[0].update(Size=minutes * 60 * 1_000_000, Bitrate=8_000_000, RunTimeTicks=minutes * 60 * TICKS)
+        return source
+
+    ids = {}
+    for i, film in enumerate(library["films"]):
+        mid = ids[film["key"]] = gid(5100 + i)
+        tags, backdrops = pictures(mid, film)
+        add({"Id": mid, "Name": film["name"], "SortName": film["name"].lower(), "Type": "Movie", "MediaType": "Video", "IsFolder": False,
+             "ParentId": VIEWS["movies"], "ProductionYear": film["year"], "PremiereDate": "%d-04-10T00:00:00.0000000Z" % film["year"],
+             "RunTimeTicks": film["minutes"] * 60 * TICKS, "Genres": film["genres"], "Overview": film["overview"],
+             "DateCreated": "2026-10-%02dT10:00:00.0000000Z" % (1 + i), "ImageTags": tags, "BackdropImageTags": backdrops,
+             "People": credits(film), "Studios": [{"Name": "Blender Foundation", "Id": gid(5090)}],
+             "MediaSources": sources(mid, film["minutes"]), "LocalTrailerCount": 0})
+    for s, show in enumerate(library["shows"]):
+        sid = ids[show["key"]] = gid(5200 + s * 100)
+        tags, backdrops = pictures(sid, show)
+        add({"Id": sid, "Name": show["name"], "SortName": show["name"].lower(), "Type": "Series", "IsFolder": True, "ParentId": VIEWS["tvshows"],
+             "ProductionYear": show["year"], "EndDate": "%d-12-31T00:00:00.0000000Z" % show["endYear"], "Status": "Ended",
+             "Genres": show["genres"], "Overview": show["overview"], "DateCreated": "2026-10-20T10:00:00.0000000Z",
+             "ImageTags": tags, "BackdropImageTags": backdrops, "People": credits(show)})
+        season = gid(5200 + s * 100 + 10)
+        add({"Id": season, "Name": "Season 1", "Type": "Season", "IsFolder": True, "ParentId": sid, "SeriesId": sid, "SeriesName": show["name"],
+             "IndexNumber": 1, "ImageTags": {k: v for k, v in tags.items() if k == "Primary"}})
+        if (sid, "Primary") in PICTURES:
+            PICTURES[(season, "Primary")] = PICTURES[(sid, "Primary")]
+        for e, episode in enumerate(show["episodes"], 1):
+            eid = ids[episode["key"]] = gid(5200 + s * 100 + 10 + e)
+            etags, _ = pictures(eid, episode)
+            add({"Id": eid, "Name": episode["name"], "Type": "Episode", "MediaType": "Video", "IsFolder": False, "ParentId": season,
+                 "SeriesId": sid, "SeriesName": show["name"], "SeasonId": season, "SeasonName": "Season 1", "IndexNumber": e, "ParentIndexNumber": 1,
+                 "RunTimeTicks": episode["minutes"] * 60 * TICKS, "PremiereDate": "%d-06-01T00:00:00.0000000Z" % episode["year"],
+                 "ProductionYear": episode["year"], "Overview": episode["overview"], "DateCreated": "2026-10-20T11:00:00.0000000Z",
+                 "ImageTags": etags, "SeriesPrimaryImageTag": tags.get("Primary"),
+                 "ParentBackdropItemId": sid, "ParentBackdropImageTags": backdrops, "MediaSources": sources(eid, episode["minutes"])})
+    STATE["children"] = {}
+    for b, box in enumerate(library["collections"]):
+        bid = gid(5400 + b)
+        tags, _ = pictures(bid, box)
+        add({"Id": bid, "Name": box["name"], "Type": "BoxSet", "IsFolder": True, "ParentId": VIEWS["boxsets"],
+             "ChildCount": len(box["films"]), "ImageTags": tags})
+        STATE["children"][bid] = [ids[k] for k in box["films"]]
+
+    def watching(key, fraction, day):
+        item = STATE["items"][ids[key]]
+        STATE["user"][ids[key]].update({"PlaybackPositionTicks": int(item["RunTimeTicks"] * fraction), "PlayedPercentage": fraction * 100,
+                                        "LastPlayedDate": "2026-10-%02dT20:00:00.0000000Z" % day})
+    watching("sintel", 0.42, 24)
+    watching("tears-of-steel", 0.18, 22)
+    for key in ("big-buck-bunny", "elephants-dream", "llama-drama"):
+        STATE["user"][ids[key]].update({"Played": True, "PlayCount": 1, "LastPlayedDate": "2026-10-18T20:00:00.0000000Z"})
+    for key in ("spring", "sprite-fright"):
+        STATE["user"][ids[key]].update({"IsFavorite": True})
 
 
 # ---------------------------------------------------------------- shaping
@@ -331,14 +429,14 @@ class Handler(BaseHTTPRequestHandler):
 
         # ------------------------------------------------ public
         if path == "/System/Info/Public":
-            return self.send(200, {"LocalAddress": "http://127.0.0.1", "ServerName": "Mock Jellyfin", "Version": "12.2.0",
+            return self.send(200, {"LocalAddress": "http://127.0.0.1", "ServerName": NAMES["server"], "Version": "12.2.0",
                                    "ProductName": "Jellyfin Server", "Id": SERVER_ID, "StartupWizardCompleted": True})
         if path == "/QuickConnect/Enabled":
             return self.send(200, True)
         if path == "/Users/Public":
-            return self.send(200, [{"Name": "Daniel", "Id": USER_ID, "HasPassword": True}])
+            return self.send(200, [{"Name": NAMES["user"], "Id": USER_ID, "HasPassword": True}])
         if path == "/Users/AuthenticateByName" and method == "POST":
-            if body.get("Username") != "Daniel" or body.get("Pw") != PASSWORD:
+            if body.get("Username") != NAMES["user"] or body.get("Pw") != PASSWORD:
                 return self.send(401, "Error processing request.", "text/plain")
             return self.send(200, self.session())
         if path == "/QuickConnect/Initiate" and method == "POST":
@@ -364,6 +462,11 @@ class Handler(BaseHTTPRequestHandler):
             item = STATE["items"].get(m.group(1))
             if not item:
                 return self.send(404, b"", "text/plain")
+            picture = PICTURES.get((m.group(1), m.group(2)))
+            if picture:
+                return self.send(200, open(picture, "rb").read(), "image/jpeg")
+            if PICTURES:
+                return self.send(404, b"", "text/plain")
             shade = int(m.group(1)[-2:], 16)
             colors = {"Primary": (40 + shade % 160, 80, 160), "Backdrop": (30, 60 + shade % 120, 90), "Logo": (230, 200, 60), "Thumb": (120, 60, 60)}
             return self.send(200, png(64 if m.group(2) != "Backdrop" else 160, 96 if m.group(2) == "Primary" else 90, colors.get(m.group(2), (90, 90, 90))), "image/png")
@@ -375,7 +478,7 @@ class Handler(BaseHTTPRequestHandler):
             STATE["requests"].append(method + " " + path)
 
         if path == "/Users/Me":
-            return self.send(200, {"Name": "Daniel", "Id": USER_ID, "ServerId": SERVER_ID, "Policy": {"IsAdministrator": False}})
+            return self.send(200, {"Name": NAMES["user"], "Id": USER_ID, "ServerId": SERVER_ID, "Policy": {"IsAdministrator": False}})
         if path == "/Sessions/Logout" and method == "POST":
             STATE["tokens"].pop(self.token(q), None)
             STATE["logouts"] += 1
@@ -501,7 +604,7 @@ class Handler(BaseHTTPRequestHandler):
         token = secrets.token_hex(16)
         STATE["tokens"][token] = USER_ID
         return {"AccessToken": token, "ServerId": SERVER_ID,
-                "User": {"Name": "Daniel", "Id": USER_ID, "Policy": {"IsAdministrator": False}}}
+                "User": {"Name": NAMES["user"], "Id": USER_ID, "Policy": {"IsAdministrator": False}}}
 
     def items(self, q):
         items = all_items()
@@ -689,6 +792,8 @@ def main():
             DOWNLOAD_SIZE = os.path.getsize(video)
     if "--seed" in sys.argv:
         seed()
+    if "--showcase" in sys.argv:
+        seed_showcase(sys.argv[sys.argv.index("--showcase") + 1])
     if "--big" in sys.argv:
         seed_big()
     ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
