@@ -78,6 +78,7 @@ def main():
         meta = os.path.join(film, ".omafin")
         item = json.load(open(os.path.join(meta, "item.json")))
         assert item["Name"] == "Blade Runner" and "UserData" not in item, "the account's viewing record stays out of the video folder"
+        assert os.stat(videos).st_mode & 0o777 == 0o700, "the download folder Omafin made is the user's alone"
         assert os.stat(meta).st_mode & 0o777 == 0o700 and os.stat(os.path.join(meta, "item.json")).st_mode & 0o777 == 0o600
         assert os.path.exists(os.path.join(meta, "primary.img")) and os.path.exists(os.path.join(meta, "backdrop.img"))
         assert not [f for f in os.listdir(film) if f.endswith(".part")]

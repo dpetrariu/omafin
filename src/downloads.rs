@@ -387,6 +387,23 @@ fn root(app: &App) -> PathBuf {
     if dir.is_empty() { app.paths.default_downloads() } else { PathBuf::from(dir) }
 }
 
+/// The download folder, when Omafin has to make it, is the user's alone:
+/// the names in it say what was downloaded. One that is already there
+/// (chosen in Settings, or shared on purpose) is left as it is.
+fn make_root(root: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    if root.try_exists()? {
+        return Ok(());
+    }
+    if let Some(parent) = root.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    match std::fs::DirBuilder::new().mode(0o700).create(root) {
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        other => other,
+    }
+}
+
 // ---------------------------------------------------------------- offline
 
 impl Downloads {
@@ -1113,6 +1130,12 @@ fn wanted(app: &App, id: &str) -> bool {
 
 async fn transfer(app: &Arc<App>, entry: &Entry) -> Outcome {
     let folder = PathBuf::from(&entry.folder);
+    let top = root(app);
+    if folder.starts_with(&top) {
+        if let Err(err) = make_root(&top) {
+            return Outcome::Fail(format!("Could not make the folder {}: {err}", top.display()));
+        }
+    }
     if let Err(err) = std::fs::create_dir_all(&folder) {
         return Outcome::Fail(format!("Could not make the folder {}: {err}", folder.display()));
     }
@@ -1517,6 +1540,21 @@ mod tests {
         assert!(saved.get("UserData").is_none());
         assert_eq!(saved["Name"], "Pilot");
         assert_eq!((mode(&item), mode(&meta)), (0o600, 0o700));
+    }
+
+    #[test]
+    fn a_download_folder_omafin_makes_is_private_and_a_chosen_one_is_left_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let dir = tempfile::tempdir().unwrap();
+        let made = dir.path().join("Videos/Omafin");
+        make_root(&made).unwrap();
+        assert_eq!(mode(&made), 0o700);
+        let chosen = dir.path().join("Shared");
+        std::fs::create_dir(&chosen).unwrap();
+        std::fs::set_permissions(&chosen, std::fs::Permissions::from_mode(0o755)).unwrap();
+        make_root(&chosen).unwrap();
+        assert_eq!(mode(&chosen), 0o755);
     }
 
     #[test]
