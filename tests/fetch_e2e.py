@@ -26,6 +26,9 @@ REPO = os.path.dirname(HERE)
 
 
 def make_release(binary, version, folder, tamper=False):
+    """A stand-in release; returns the backend.sha256 line for the genuine build.
+    A tampered release also ships a SHA256SUMS that matches its tampered file,
+    as anyone able to replace the release's files could."""
     arch = {"x86_64": "x86_64", "amd64": "x86_64", "aarch64": "aarch64", "arm64": "aarch64"}[platform.machine()]
     asset = f"omafin-{version}-linux-{arch}.tar.gz"
     out = os.path.join(folder, f"v{version}")
@@ -33,12 +36,13 @@ def make_release(binary, version, folder, tamper=False):
     path = os.path.join(out, asset)
     with tarfile.open(path, "w:gz") as tar:
         tar.add(binary, arcname="omafin")
-    digest = hashlib.sha256(open(path, "rb").read()).hexdigest()
-    with open(os.path.join(out, "SHA256SUMS"), "w") as f:
-        f.write(f"{digest}  {asset}\n")
+    pin = f"{hashlib.sha256(open(path, 'rb').read()).hexdigest()}  {asset}\n"
     if tamper:
         with open(path, "ab") as f:
             f.write(b"x")
+    with open(os.path.join(out, "SHA256SUMS"), "w") as f:
+        f.write(f"{hashlib.sha256(open(path, 'rb').read()).hexdigest()}  {asset}\n")
+    return pin
 
 
 def serve(folder):
@@ -49,13 +53,16 @@ def serve(folder):
     return server, f"http://127.0.0.1:{port}"
 
 
-def plugin_copy(root):
-    """The plugin as `omarchy plugin add` leaves it: code, no bin/, no target/."""
+def plugin_copy(root, pin):
+    """The plugin as `omarchy plugin add` leaves it: code and the committed
+    checksums, no bin/, no target/."""
     plugin = os.path.join(root, "plugin")
     os.makedirs(plugin)
     for name in ("ui", "scripts"):
         shutil.copytree(os.path.join(REPO, name), os.path.join(plugin, name))
     shutil.copy(os.path.join(REPO, "manifest.json"), plugin)
+    with open(os.path.join(plugin, "backend.sha256"), "w") as f:
+        f.write("# test pins\n" + pin)
     return plugin
 
 
@@ -80,12 +87,12 @@ def main():
 
         # A genuine release: downloaded, checked, run.
         good = os.path.join(work, "good")
-        make_release(binary, version, good)
+        pin = make_release(binary, version, good)
         server, url = serve(good)
         servers.append(server)
         root = os.path.join(work, "a")
         os.makedirs(root)
-        plugin = plugin_copy(root)
+        plugin = plugin_copy(root, pin)
         h = start(binary, root, plugin, url, version)
         harnesses.append(h)
         wait_for("the backend is downloaded and running", lambda: h.ipc("ready") == "yes", 60)
@@ -95,14 +102,15 @@ def main():
         h.stop()
         print("ok: a fresh install downloads, verifies and runs its backend")
 
-        # A tampered release: refused, with a way forward on screen.
+        # A tampered release, its SHA256SUMS rewritten to match: refused,
+        # because only the checksum committed in the plugin counts.
         bad = os.path.join(work, "bad")
-        make_release(binary, version, bad, tamper=True)
+        pin = make_release(binary, version, bad, tamper=True)
         server, url = serve(bad)
         servers.append(server)
         root = os.path.join(work, "b")
         os.makedirs(root)
-        plugin = plugin_copy(root)
+        plugin = plugin_copy(root, pin)
         h = start(binary, root, plugin, url, version)
         harnesses.append(h)
         wait_for("the download is refused", lambda: h.ipc("js", "service ? service.backendState : ''") == "failed", 60)
@@ -110,6 +118,17 @@ def main():
         assert not os.path.exists(os.path.join(plugin, "bin", "omafin"))
         h.shot("fetch-refused")
         print("ok: a tampered download is refused and nothing is installed")
+
+        # No committed checksum for this version: nothing is downloaded at all.
+        root = os.path.join(work, "c")
+        os.makedirs(root)
+        plugin = plugin_copy(root, "")
+        h = start(binary, root, plugin, url, version)
+        harnesses.append(h)
+        wait_for("the unpinned download is refused", lambda: h.ipc("js", "service ? service.backendState : ''") == "failed", 60)
+        assert "no checksum" in h.ipc("js", "service.backendMessage"), h.ipc("js", "service.backendMessage")
+        assert not os.path.exists(os.path.join(plugin, "bin", "omafin"))
+        print("ok: a version without a committed checksum is not downloaded")
         print("all fetch checks passed")
     finally:
         for h in harnesses:

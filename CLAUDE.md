@@ -58,8 +58,8 @@ Rust comes from mise: prefix cargo with `mise exec rust@latest cmake@latest --` 
 
 ## Releases and the backend binary
 
-- The plugin runs `bin/omafin` and requires its `omafin version` to equal `manifest.json`'s version. If it does not, `Service.qml` runs `scripts/fetch-backend.sh`, which downloads `omafin-<version>-linux-<arch>.tar.gz` from the `v<version>` release, checks it against `SHA256SUMS` and that the binary reports the version, then swaps it in. A checkout with `target/` is a development copy and is never overwritten.
-- Cut a release with `scripts/release.sh X.Y.Z` from a clean, pushed `main`. `.github/workflows/release.yml` refuses a tag that disagrees with `Cargo.toml` or `manifest.json`, builds on `ubuntu-22.04` and `ubuntu-22.04-arm`, and publishes.
+- The plugin runs `bin/omafin` and requires its `omafin version` to equal `manifest.json`'s version. If it does not, `Service.qml` runs `scripts/fetch-backend.sh`, which downloads `omafin-<version>-linux-<arch>.tar.gz` from the `v<version>` release, checks it against the checksum committed in `backend.sha256` (never the release's own `SHA256SUMS`, which whoever could replace the archive could replace too) and that the binary reports the version, then swaps it in. A version with no line there is not downloaded. A checkout with `target/` is a development copy and is never overwritten.
+- Cut a release with `scripts/release.sh X.Y.Z` from a clean, pushed `main`. It pushes only the tag, waits for the Release workflow, checks the published archives and commits their checksums to `backend.sha256` before pushing `main`, so `main` never names a version whose backend is not pinned (`scripts/release.sh --pin X.Y.Z` finishes an interrupted run). `.github/workflows/release.yml` refuses a tag that disagrees with `Cargo.toml` or `manifest.json`, builds on `ubuntu-22.04` and `ubuntu-22.04-arm` without a build cache, and publishes; it never replaces a release that already exists, so a fix ships as a new version. Workflow actions are pinned to commit SHAs.
 
 ## How a feature is added
 

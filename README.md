@@ -32,7 +32,7 @@ You need [Omarchy](https://omarchy.org) 4 or later and a Jellyfin server (10.9 o
 curl -fsSL https://raw.githubusercontent.com/dpetrariu/omafin/main/install.sh | bash
 ```
 
-It downloads Omafin into `~/.local/share/omafin-plugin`, fetches the prebuilt backend for your machine (checked against the release checksums), or builds it if none fits, adds the plugin to Omarchy with its bar icon, and restarts the shell. `--build` always builds from source. From a checkout, run `./install.sh` instead.
+It downloads Omafin into `~/.local/share/omafin-plugin`, fetches the prebuilt backend for your machine (checked against the checksums committed in this repository), or builds it if none fits, adds the plugin to Omarchy with its bar icon, and restarts the shell. `--build` always builds from source. From a checkout, run `./install.sh` instead.
 
 With Omarchy's plugin manager instead, `omarchy plugin add https://github.com/dpetrariu/omafin.git --enable` works too: the first time the window opens, Omafin downloads its backend by itself. The installer additionally adds the launcher entry and its icon.
 

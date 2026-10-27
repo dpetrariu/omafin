@@ -31,7 +31,7 @@ jobs:
             runner: ubuntu-22.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ env.TAG }}
 
@@ -41,12 +41,11 @@ jobs:
           grep -q "^version = \"$version\"" Cargo.toml || { echo "Cargo.toml is not $version"; exit 1; }
           grep -q "\"version\": \"$version\"" manifest.json || { echo "manifest.json is not $version"; exit 1; }
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          key: ${{ matrix.arch }}
+          toolchain: stable
 
+      # No build cache here: what ships is built from the tag alone.
       - name: Test
         run: cargo test --locked
 
@@ -62,7 +61,7 @@ jobs:
           sha256sum "$asset" > "$asset.sha256"
           echo "ASSET=$asset" >> "$GITHUB_ENV"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: backend-${{ matrix.arch }}
           path: |
@@ -75,7 +74,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
           merge-multiple: true
@@ -88,13 +87,15 @@ jobs:
           sha256sum --check --strict SHA256SUMS
           cat SHA256SUMS
 
-      - name: Create or update the release
+      # A published release is never replaced: installs pin these archives by
+      # checksum (backend.sha256), so a fix ships as a new version.
+      - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/* --clobber
-          else
-            gh release create "$TAG" dist/* --title "Omafin ${TAG#v}" --generate-notes --verify-tag
+            echo "$TAG is already published and is not replaced; release a new version instead" >&2
+            exit 1
           fi
+          gh release create "$TAG" dist/* --title "Omafin ${TAG#v}" --generate-notes --verify-tag
