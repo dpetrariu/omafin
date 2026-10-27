@@ -1,5 +1,5 @@
-# The prebuilt backends of v0.1.2, as the Release workflow built them from tag v0.1.2 (2ef293c).
+# The prebuilt backends of v0.1.3, as the Release workflow built them from tag v0.1.3 (65c1ee4).
 # scripts/fetch-backend.sh installs a download only if it matches a line here; scripts/release.sh
 # writes this file after each release.
-538c1cda90ae2e13d20103591e20f8d8ca027dc65af69b9250b02af22f4d1cf7  omafin-0.1.2-linux-aarch64.tar.gz
-cc321f8172df1bf5b0c80952b73421c4602df7b7b3981a37287eef161eed7624  omafin-0.1.2-linux-x86_64.tar.gz
+072050fd595e677e481d69a82ac0841a682537ebafb8d6cd9b3069bfd551924c  omafin-0.1.3-linux-aarch64.tar.gz
+e14b396bf94f3292451d91e81923d5c5af3a853b43042bbaf9ac8889a0bf7bb1  omafin-0.1.3-linux-x86_64.tar.gz
