@@ -188,6 +188,7 @@ async fn finish_sign_in(app: &App, url: &str, auth: &Value) -> Result<Value> {
             settings.server_enabled.then(|| settings.server_url.clone()),
             settings.external_enabled.then(|| settings.external_url.clone()),
             Some(token),
+            Some(settings.server_id.clone()),
         )
         .await;
     app.notifier.notify("server.changed", json!({}));

@@ -61,8 +61,10 @@ def make_media(folder):
     return folder
 
 
-def start_mock(port, media=None, big=False):
+def start_mock(port, media=None, big=False, server_id=None):
     args = [sys.executable, "-I", os.path.join(HERE, "mock_jellyfin.py"), str(port), "--seed"] + (["--big"] if big else [])
+    if server_id:
+        args += ["--server-id", server_id]
     if media:
         args += ["--media", media]
     proc = subprocess.Popen(args)
@@ -191,6 +193,20 @@ def main():
         done = b.call("auth.quickConnectPoll")
         assert done["state"] == "signedIn" and done["settings"]["signedIn"] is True
         print("ok: sign-out and Quick Connect")
+
+        # A different Jellyfin answering at the saved address (someone else's
+        # network, same IP) never receives the session.
+        stranger_port = free_port()
+        stranger = start_mock(stranger_port, server_id="0123456789abcdef0123456789abcdef")
+        try:
+            b.call("settings.update", {"patch": {"serverUrl": f"127.0.0.1:{stranger_port}"}})
+            b.refused("home", {}, "different jellyfin server")
+            assert state(stranger_port)["tokenRequests"] == 0, state(stranger_port)
+            b.call("settings.update", {"patch": {"serverUrl": url}})
+        finally:
+            stranger.terminate()
+            stranger.wait(5)
+        print("ok: the session goes only to the signed-in server")
 
         # The home page.
         overview = b.call("server.overview")

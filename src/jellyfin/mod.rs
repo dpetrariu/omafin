@@ -21,6 +21,10 @@ struct Conn {
     lan: Option<String>,
     wan: Option<String>,
     token: Option<String>,
+    /// The server signed in to. An address whose server reports another Id
+    /// never gets the token: on someone else's network, a different machine
+    /// can answer at the home address.
+    server_id: Option<String>,
     active: Option<String>,
     route: &'static str,
 }
@@ -74,11 +78,18 @@ impl Jellyfin {
         value
     }
 
-    pub async fn configure(&self, lan: Option<String>, wan: Option<String>, token: Option<String>) {
+    pub async fn configure(
+        &self,
+        lan: Option<String>,
+        wan: Option<String>,
+        token: Option<String>,
+        server_id: Option<String>,
+    ) {
         let mut conn = self.conn.write().await;
         conn.lan = lan.filter(|s| !s.is_empty());
         conn.wan = wan.filter(|s| !s.is_empty());
         conn.token = token.filter(|s| !s.is_empty());
+        conn.server_id = server_id.filter(|s| !s.is_empty());
         conn.active = None;
     }
 
@@ -141,19 +152,31 @@ impl Jellyfin {
                 return Err(Error::not_configured());
             }
         }
-        let (lan, wan, token) = {
+        let (lan, wan, token, server_id) = {
             let conn = self.conn.read().await;
-            (conn.lan.clone(), conn.wan.clone(), conn.token.clone().unwrap_or_default())
+            (conn.lan.clone(), conn.wan.clone(), conn.token.clone().unwrap_or_default(), conn.server_id.clone())
         };
+        let mut stranger = None;
         for (candidate, route) in [(lan, "lan"), (wan, "wan")] {
             if let Some(url) = candidate {
-                if self.public_info(&url).await.is_some() {
-                    let mut conn = self.conn.write().await;
-                    conn.active = Some(url.clone());
-                    conn.route = route;
-                    return Ok((url, token));
+                let Some(info) = self.public_info(&url).await else { continue };
+                if !same_server(&info, server_id.as_deref()) {
+                    stranger = Some(url);
+                    continue;
                 }
+                let mut conn = self.conn.write().await;
+                conn.active = Some(url.clone());
+                conn.route = route;
+                return Ok((url, token));
             }
+        }
+        if let Some(url) = stranger {
+            return Err(Error::new(
+                error::NETWORK,
+                format!(
+                    "A different Jellyfin server answers at {url}, so Omafin did not send it your session. If you moved to a new server, sign in to it again"
+                ),
+            ));
         }
         Err(Error::new(error::NETWORK, "Could not reach the Jellyfin server"))
     }
@@ -319,6 +342,15 @@ pub fn q(value: &str) -> String {
     percent_encoding::utf8_percent_encode(value, percent_encoding::NON_ALPHANUMERIC).to_string()
 }
 
+/// Whether `info` (from /System/Info/Public) is the server signed in to. With
+/// no saved Id (a sign-in from before Omafin kept one) any server counts.
+pub fn same_server(info: &Value, expected: Option<&str>) -> bool {
+    match expected {
+        Some(id) => info.get("Id").and_then(|v| v.as_str()) == Some(id),
+        None => true,
+    }
+}
+
 /// Jellyfin ids are GUIDs, written as 32 hex digits or with dashes; anything
 /// else never reaches a URL path.
 pub fn valid_id(id: &str) -> bool {
@@ -349,6 +381,16 @@ mod tests {
         assert!(valid_id("95d338b7-e7d1-4a25-89e5-869b16fca112"));
         assert!(!valid_id("../../etc/passwd"));
         assert!(!valid_id("b5bc49c0d5bc4cde8391f85fc2d1366z"));
+    }
+
+    #[test]
+    fn sends_the_token_only_to_the_signed_in_server() {
+        let ours = serde_json::json!({ "Id": "b5bc49c0d5bc4cde8391f85fc2d13667" });
+        let theirs = serde_json::json!({ "Id": "0123456789abcdef0123456789abcdef" });
+        assert!(same_server(&ours, Some("b5bc49c0d5bc4cde8391f85fc2d13667")));
+        assert!(!same_server(&theirs, Some("b5bc49c0d5bc4cde8391f85fc2d13667")));
+        assert!(!same_server(&serde_json::json!({}), Some("b5bc49c0d5bc4cde8391f85fc2d13667")));
+        assert!(same_server(&theirs, None));
     }
 
     #[test]

@@ -39,6 +39,7 @@ impl App {
                 settings.server_enabled.then(|| settings.server_url.clone()),
                 settings.external_enabled.then(|| settings.external_url.clone()),
                 token,
+                Some(settings.server_id.clone()),
             )
             .await;
         let media = Media::start(jellyfin.clone(), paths.media_cache()).await?;

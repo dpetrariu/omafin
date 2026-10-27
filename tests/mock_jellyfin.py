@@ -39,6 +39,7 @@ STATE = {
     "quick": {},        # secret -> { code, authorized }
     "reports": [],      # playback reports in order
     "logouts": 0,
+    "tokenRequests": 0, # requests that carried a session token
     "requests": [],     # method, path (writes only)
     "playbackInfo": [], # what each PlaybackInfo asked for
     "versions": {},     # item id -> file version (a new version changes bytes and date)
@@ -387,6 +388,8 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         path, q = url.path, parse_qs(url.query)
         body = self.body() if method in ("POST", "DELETE") else {}
+        if path != "/_state" and self.token(q):
+            STATE["tokenRequests"] += 1
         m = re.match(r"^/Items/([0-9a-f]{32})/Download$", path)
         if m and method in ("GET", "HEAD"):
             # Outside the lock: a slow download must not hold up the rest.
@@ -408,6 +411,7 @@ class Handler(BaseHTTPRequestHandler):
                 "favorites": [k for k, v in STATE["user"].items() if v["IsFavorite"]],
                 "positions": {k: v["PlaybackPositionTicks"] / TICKS for k, v in STATE["user"].items() if v["PlaybackPositionTicks"]},
                 "reports": STATE["reports"], "logouts": STATE["logouts"], "tokens": len(STATE["tokens"]),
+                "tokenRequests": STATE["tokenRequests"],
                 "quick": [{"code": v["code"], "authorized": v["authorized"]} for v in STATE["quick"].values()],
                 "writes": STATE["requests"],
                 "playbackInfo": STATE["playbackInfo"],
@@ -783,8 +787,11 @@ def seed_big():
 
 
 def main():
-    global DOWNLOAD_SIZE
+    global DOWNLOAD_SIZE, SERVER_ID
     port = int(sys.argv[1])
+    # Another server: same software, a different install.
+    if "--server-id" in sys.argv:
+        SERVER_ID = sys.argv[sys.argv.index("--server-id") + 1]
     if "--media" in sys.argv:
         MEDIA["dir"] = sys.argv[sys.argv.index("--media") + 1]
         video = os.path.join(MEDIA["dir"], "test.mp4")
