@@ -173,6 +173,10 @@ impl Downloads {
             }
         }
         entries.retain(|e| valid_id(&e.id) && !e.folder.is_empty() && !e.file.is_empty());
+        for e in &entries {
+            tidy_metadata(&e.meta);
+            tidy_metadata(&e.series_meta);
+        }
         let downloads = Arc::new(Self { entries: Mutex::new(entries), index, wake: Notify::new(), watcher: Mutex::new(None), rewatch: Mutex::new(None) });
         let _ = downloads.check_files();
         downloads.save();
@@ -1281,7 +1285,7 @@ async fn transfer(app: &Arc<App>, entry: &Entry) -> Outcome {
 async fn save_metadata(app: &App, entry: &Entry) -> Result<()> {
     let uid = user_id(app)?;
     let meta = PathBuf::from(&entry.meta);
-    std::fs::create_dir_all(&meta)?;
+    private_dir(&meta)?;
     let item = app.jellyfin.get(&format!("/Items/{}?userId={uid}", entry.id)).await?;
     write_json(&meta.join("item.json"), &item)?;
     save_images(app, &item, &meta).await;
@@ -1320,7 +1324,7 @@ async fn save_metadata(app: &App, entry: &Entry) -> Result<()> {
         let series_meta = PathBuf::from(&entry.series_meta);
         if !series_meta.join("item.json").exists() {
             if let Some(series_id) = item.get("SeriesId").and_then(|v| v.as_str()).filter(|i| valid_id(i)) {
-                std::fs::create_dir_all(&series_meta)?;
+                private_dir(&series_meta)?;
                 let series = app.jellyfin.get(&format!("/Items/{series_id}?userId={uid}")).await?;
                 write_json(&series_meta.join("item.json"), &series)?;
                 save_images(app, &series, &series_meta).await;
@@ -1359,12 +1363,48 @@ async fn save_image(app: &App, url: &str, path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Saved without the account's own record of it (played, play count, last
+/// played, where it was left): the download folder may be readable by
+/// others on the machine, and the downloads list keeps that state instead.
 fn write_json(path: &Path, value: &Value) -> Result<()> {
-    let bytes = serde_json::to_vec_pretty(value)?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, &bytes)?;
-    std::fs::rename(&tmp, path)?;
+    let mut value = value.clone();
+    if let Some(item) = value.as_object_mut() {
+        item.remove("UserData");
+    }
+    crate::paths::write_private(path, &serde_json::to_vec_pretty(&value)?)?;
     Ok(())
+}
+
+/// A metadata folder, and the `.omafin` folder holding it, open only to
+/// the user: the video beside it may be shared, what the account saw of
+/// it is not.
+fn private_dir(meta: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(meta)?;
+    let top = meta.ancestors().position(|d| d.file_name().and_then(|n| n.to_str()) == Some(".omafin"));
+    for dir in meta.ancestors().take(top.map_or(1, |i| i + 1)) {
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+/// Metadata saved by earlier versions: made private, and the account's
+/// viewing record taken out of it.
+fn tidy_metadata(meta: &str) {
+    if meta.is_empty() {
+        return;
+    }
+    let meta = Path::new(meta);
+    if !meta.is_dir() {
+        return;
+    }
+    let _ = private_dir(meta);
+    let item = meta.join("item.json");
+    if let Some(value) = read_json(&item) {
+        if value.get("UserData").is_some() {
+            let _ = write_json(&item, &value);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1454,6 +1494,29 @@ mod tests {
         std::fs::write(video_only.video(), b"x").unwrap();
         downloads.check_files();
         assert_eq!(downloads.get(&video_only.id).unwrap().state, State::Done);
+    }
+
+    #[test]
+    fn metadata_is_private_and_keeps_no_viewing_record() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let dir = tempfile::tempdir().unwrap();
+        let season = dir.path().join("Season 01");
+        std::fs::create_dir_all(&season).unwrap();
+        std::fs::set_permissions(&season, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let meta = season.join(".omafin/S01E01 - Pilot");
+        private_dir(&meta).unwrap();
+        assert_eq!((mode(&meta), mode(&season.join(".omafin")), mode(&season)), (0o700, 0o700, 0o755));
+        // A sidecar from an earlier version: readable by all, with the record in it.
+        let item = meta.join("item.json");
+        std::fs::write(&item, br#"{"Id":"a","Name":"Pilot","UserData":{"PlayCount":3,"LastPlayedDate":"2026-01-01"}}"#).unwrap();
+        std::fs::set_permissions(&item, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::fs::set_permissions(&meta, std::fs::Permissions::from_mode(0o755)).unwrap();
+        tidy_metadata(&meta.to_string_lossy());
+        let saved = read_json(&item).unwrap();
+        assert!(saved.get("UserData").is_none());
+        assert_eq!(saved["Name"], "Pilot");
+        assert_eq!((mode(&item), mode(&meta)), (0o600, 0o700));
     }
 
     #[test]

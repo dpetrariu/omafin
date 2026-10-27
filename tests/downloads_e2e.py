@@ -76,7 +76,9 @@ def main():
         assert done["path"] == os.path.join(film, "Blade Runner (1982).mp4"), done["path"]
         assert open(done["path"], "rb").read() == expected(BLADE)
         meta = os.path.join(film, ".omafin")
-        assert json.load(open(os.path.join(meta, "item.json")))["Name"] == "Blade Runner"
+        item = json.load(open(os.path.join(meta, "item.json")))
+        assert item["Name"] == "Blade Runner" and "UserData" not in item, "the account's viewing record stays out of the video folder"
+        assert os.stat(meta).st_mode & 0o777 == 0o700 and os.stat(os.path.join(meta, "item.json")).st_mode & 0o777 == 0o600
         assert os.path.exists(os.path.join(meta, "primary.img")) and os.path.exists(os.path.join(meta, "backdrop.img"))
         assert not [f for f in os.listdir(film) if f.endswith(".part")]
         assert any(e.get("method") == "downloads.changed" and e["params"].get("entry", {}).get("state") == "downloading" for e in b.events)
@@ -163,7 +165,10 @@ def main():
             done = wait_state(b, ep, "done", 30)
             assert done["path"] == os.path.join(season, f"S01E0{n} - Episode {n}.mp4"), done["path"]
         series_meta = os.path.join(videos, "Shows", "Homeland", ".omafin", "series")
-        assert json.load(open(os.path.join(series_meta, "item.json")))["Name"] == "Homeland"
+        series_item = json.load(open(os.path.join(series_meta, "item.json")))
+        assert series_item["Name"] == "Homeland" and "UserData" not in series_item
+        assert os.stat(os.path.dirname(series_meta)).st_mode & 0o777 == 0o700
+        assert os.stat(os.path.join(season, ".omafin")).st_mode & 0o777 == 0o700
         assert b.call("downloads.addSeason", {"seriesId": HOMELAND, "seasonId": SEASON1}) == {"added": 0, "skipped": 3}
         # Downloads play from their files, and work with the server out of reach.
         base = b.call("system.info")["mediaBase"]
