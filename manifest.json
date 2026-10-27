@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "dpetrariu.omafin",
   "name": "Omafin",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "author": "omafin contributors",
   "license": "GPL-3.0-or-later",
   "description": "Your Jellyfin movies and shows in a native Omarchy window: continue watching, next up, libraries, details, search and a keyboard-first player with skip intro and up next. Hands any video to mpv in one key. Follows your Omarchy theme.",
