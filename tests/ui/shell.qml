@@ -25,7 +25,7 @@ ShellRoot {
     source: "file://" + root.ui + "/Service.qml"
     onLoaded: {
       item.shell = shellApi
-      item.manifest = { id: "omafin", version: Quickshell.env("OMAFIN_VERSION") || "test" }
+      item.manifest = { id: "dpetrariu.omafin", version: Quickshell.env("OMAFIN_VERSION") || "test" }
     }
   }
 
@@ -35,7 +35,7 @@ ShellRoot {
     source: "file://" + root.ui + "/App.qml"
     onLoaded: {
       item.shell = shellApi
-      item.manifest = { id: "omafin" }
+      item.manifest = { id: "dpetrariu.omafin" }
       item.service = serviceLoader.item
       item.open("{}")
     }

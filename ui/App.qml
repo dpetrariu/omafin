@@ -24,7 +24,7 @@ Item {
   property bool opened: false
   property bool closingFromHost: false
 
-  readonly property string pluginId: manifest && manifest.id ? String(manifest.id) : "omafin"
+  readonly property string pluginId: manifest && manifest.id ? String(manifest.id) : "dpetrariu.omafin"
   readonly property bool ready: !!service && service.ready
   readonly property bool configured: !!service && service.configured
 
@@ -52,7 +52,7 @@ Item {
     closingFromHost = false
   }
 
-  // `omarchy-shell shell call omafin navigate <id>` — keyboard actions that
+  // `omarchy-shell shell call dpetrariu.omafin navigate <id>` — keyboard actions that
   // only move around, for scripts and keybindings. Anything that changes
   // the library or starts playback is refused here.
   readonly property var navigationIds: ["left", "right", "up", "down", "pageDown", "pageUp", "first", "last",
@@ -73,7 +73,7 @@ Item {
     return "ok"
   }
 
-  // `omarchy-shell shell call omafin screenshot /path.png` saves what the
+  // `omarchy-shell shell call dpetrariu.omafin screenshot /path.png` saves what the
   // window shows, for bug reports and the UI tests.
   function screenshot(path) {
     var target = String(path || "")

@@ -97,7 +97,8 @@ def main():
 
     lines = ["# Showcase pictures", "",
              "The showcase library's pictures come from the Blender Foundation's open movies, through Wikimedia Commons. "
-             "Each was resized and cropped to fit; frames are stills from the film at the second given.", ""]
+             "Each was resized and cropped to fit; frames are stills from the film at the second given. "
+             "`preview.png`, the marketplace preview in the repository root, is the same screenshot as `docs/images/home.webp`.", ""]
     for label, kind, c in credits:
         what = {"Primary": "poster" if "·" not in label else "still", "Backdrop": "backdrop"}.get(kind, kind.lower())
         frame = " (frame at %d s)" % c["frameAt"] if "frameAt" in c else ""

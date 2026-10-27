@@ -2,7 +2,7 @@
 Type=Application
 Name=Omafin
 Comment=Your Jellyfin movies and shows
-Exec=omarchy-shell shell toggle omafin {}
+Exec=omarchy-shell shell toggle dpetrariu.omafin {}
 Icon=omafin
 Terminal=false
 Categories=AudioVideo;Video;Player;

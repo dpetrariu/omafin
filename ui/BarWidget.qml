@@ -12,9 +12,9 @@ import "lib/Format.js" as Format
 BarWidget {
   id: root
 
-  moduleName: "omafin"
+  moduleName: "dpetrariu.omafin"
 
-  readonly property var service: bar && bar.shell ? bar.shell.serviceFor("omafin") : null
+  readonly property var service: bar && bar.shell ? bar.shell.serviceFor("dpetrariu.omafin") : null
   readonly property color foreground: bar ? bar.barForeground : Commons.Color.foreground
 
   function pushSettings() {
@@ -27,8 +27,8 @@ BarWidget {
   function openWindow(payload) {
     if (!bar || !bar.shell) return
     var text = JSON.stringify(payload || {})
-    if (payload && typeof bar.shell.summon === "function") bar.shell.summon("omafin", text)
-    else if (typeof bar.shell.toggle === "function") bar.shell.toggle("omafin", text)
+    if (payload && typeof bar.shell.summon === "function") bar.shell.summon("dpetrariu.omafin", text)
+    else if (typeof bar.shell.toggle === "function") bar.shell.toggle("dpetrariu.omafin", text)
   }
 
   readonly property bool drawsIcon: !service || service.showBarIcon

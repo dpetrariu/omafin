@@ -12,15 +12,18 @@ project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 config="${XDG_CONFIG_HOME:-$HOME/.config}"
 data="${XDG_DATA_HOME:-$HOME/.local/share}"
 cache="${XDG_CACHE_HOME:-$HOME/.cache}"
-link="$config/omarchy/plugins/omafin"
 
 if command -v omarchy >/dev/null; then
+  omarchy plugin disable dpetrariu.omafin >/dev/null 2>&1 || true
   omarchy plugin disable omafin >/dev/null 2>&1 || true
 fi
-# Only remove the plugin entry if it is a link (what install.sh makes), never a real folder.
-if [[ -L "$link" ]]; then
-  rm "$link"
-fi
+# Only remove a plugin entry if it is a link (what install.sh makes), never a real folder.
+# "omafin" is the id this plugin had before "dpetrariu.omafin".
+for link in "$config/omarchy/plugins/dpetrariu.omafin" "$config/omarchy/plugins/omafin"; do
+  if [[ -L "$link" ]]; then
+    rm "$link"
+  fi
+done
 rm -f "$data/applications/omafin.desktop"
 rm -f "$data/icons/hicolor/scalable/apps/omafin.svg"
 update-desktop-database "$data/applications" 2>/dev/null || true

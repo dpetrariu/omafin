@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "id": "omafin",
+  "id": "dpetrariu.omafin",
   "name": "Omafin",
   "version": "0.1.0",
   "author": "omafin contributors",
@@ -32,7 +32,7 @@
         "type": "boolean",
         "label": "Show the icon in the bar",
         "defaultValue": true,
-        "description": "Turn this off to keep Omafin out of the bar. Open the window with a keybinding: o.bind(\"SUPER + SHIFT + J\", \"Omafin\", \"omarchy shell shell toggle omafin '{}'\")"
+        "description": "Turn this off to keep Omafin out of the bar. Open the window with a keybinding: o.bind(\"SUPER + SHIFT + J\", \"Omafin\", \"omarchy shell shell toggle dpetrariu.omafin '{}'\")"
       }
     ]
   }

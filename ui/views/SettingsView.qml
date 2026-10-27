@@ -333,7 +333,7 @@ Item {
 
       SectionTitle { theme: root.theme; text: "Keyboard" }
       Note {
-        text: "Press ? in the window for every shortcut. To open Omafin from anywhere, add to ~/.config/hypr/bindings.lua:\n\no.bind(\"SUPER + SHIFT + J\", \"Omafin\", \"omarchy shell shell toggle omafin '{}'\")"
+        text: "Press ? in the window for every shortcut. To open Omafin from anywhere, add to ~/.config/hypr/bindings.lua:\n\no.bind(\"SUPER + SHIFT + J\", \"Omafin\", \"omarchy shell shell toggle dpetrariu.omafin '{}'\")"
       }
     }
   }

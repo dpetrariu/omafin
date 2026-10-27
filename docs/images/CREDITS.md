@@ -1,6 +1,6 @@
 # Showcase pictures
 
-The showcase library's pictures come from the Blender Foundation's open movies, through Wikimedia Commons. Each was resized and cropped to fit; frames are stills from the film at the second given.
+The showcase library's pictures come from the Blender Foundation's open movies, through Wikimedia Commons. Each was resized and cropped to fit; frames are stills from the film at the second given. `preview.png`, the marketplace preview in the repository root, is the same screenshot as `docs/images/home.webp`.
 
 - **Elephants Dream**, poster: [ElephantsDreamPoster.jpg](https://commons.wikimedia.org/wiki/File:ElephantsDreamPoster.jpg), by Bassam Kurdali, Andy Goralczyk, and the Blender Foundation, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0)
 - **Elephants Dream**, backdrop: [Elephants Dream s7 both.jpg](https://commons.wikimedia.org/wiki/File:Elephants_Dream_s7_both.jpg), by Ton Roosendaal et al., [CC BY 2.5](https://creativecommons.org/licenses/by/2.5)

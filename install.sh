@@ -40,7 +40,7 @@ command -v omarchy-shell >/dev/null || fail "This Omarchy has no shell plugins y
 here=""
 if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
   here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  if [[ -f "$here/manifest.json" ]] && grep -q '"id": "omafin"' "$here/manifest.json"; then
+  if [[ -f "$here/manifest.json" ]] && grep -q '"id": "dpetrariu.omafin"' "$here/manifest.json"; then
     dir="$here"
   fi
 fi

@@ -43,7 +43,7 @@ Click the film icon in the bar and enter your Jellyfin address (for example `htt
 To open Omafin from the keyboard, add a binding to `~/.config/hypr/bindings.lua`:
 
 ```lua
-o.bind("SUPER + SHIFT + J", "Omafin", "omarchy shell shell toggle omafin '{}'")
+o.bind("SUPER + SHIFT + J", "Omafin", "omarchy shell shell toggle dpetrariu.omafin '{}'")
 ```
 
 ### Update and uninstall
@@ -61,7 +61,7 @@ Nothing on the server is touched either way.
 
 Press `?` in the window for the full sheet. Browsing: `h j k l` move, `enter` open, `p` play, `Shift+P` from the start, `m` play in mpv, `w` watched, `f` favourite, `.` more, `/` or `Ctrl+K` search, `Alt+1…0` sidebar sections, `Ctrl+,` settings. Playing: `Space`/`k` pause, `←`/`j` back 10 s, `→`/`l` forward 30 s, `↑ ↓` volume, `m` mute, `s` skip intro or credits, `t` subtitles, `a` audio, `Shift+N` next episode, `PgUp`/`PgDn` chapters, `f` full window, `Shift+M` continue in mpv, `o` pop out, `Esc` close.
 
-Scripts and keybindings can move around (never mark, play or change anything) over IPC: `omarchy-shell shell call omafin navigate next`, `… navigate go:Movies`, `… navigate search:dune`.
+Scripts and keybindings can move around (never mark, play or change anything) over IPC: `omarchy-shell shell call dpetrariu.omafin navigate next`, `… navigate go:Movies`, `… navigate search:dune`.
 
 ## Development
 
