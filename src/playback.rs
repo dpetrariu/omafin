@@ -676,7 +676,6 @@ pub async fn play_in_mpv(app: &Arc<App>, params: &Value) -> Result<Value> {
         .arg("--force-window=immediate")
         .arg("--keep-open=no")
         .arg(format!("--input-ipc-server={}", socket.display()))
-        .arg(format!("--force-media-title={title}"))
         .arg("--msg-level=all=warn");
     if pip {
         // Popped out: the title "Picture-in-Picture" brings Omarchy's PiP rule
@@ -717,7 +716,7 @@ pub async fn play_in_mpv(app: &Arc<App>, params: &Value) -> Result<Value> {
     });
     let app = app.clone();
     let tracks = Tracks { audio: audio_map, subtitle: subtitle_map };
-    let job = MpvJob { socket, url, options: options.join(","), sub_url, session, tracks, pip };
+    let job = MpvJob { socket, url, title, options: options.join(","), sub_url, session, tracks, pip };
     tokio::spawn(async move {
         drive_mpv(app, child, job, stop_rx).await;
     });
@@ -768,6 +767,9 @@ impl Tracks {
 struct MpvJob {
     socket: PathBuf,
     url: String,
+    /// Set over the socket, not the command line: any account on the
+    /// machine can read a process's arguments, and this says what is on.
+    title: String,
     options: String,
     sub_url: Option<String>,
     session: String,
@@ -833,6 +835,7 @@ async fn talk_to_mpv(app: &Arc<App>, child: &mut tokio::process::Child, job: &Mp
         json!({ "command": ["observe_property", 2, "pause"] }),
         json!({ "command": ["observe_property", 3, "aid"] }),
         json!({ "command": ["observe_property", 4, "sid"] }),
+        json!({ "command": ["set_property", "force-media-title", job.title] }),
         json!({ "command": ["loadfile", job.url, "replace", -1, job.options] }),
     ] {
         write.write_all(format!("{c}\n").as_bytes()).await?;

@@ -378,6 +378,9 @@ def main():
         argv = lines[0]["argv"]
         assert not any("ApiKey" in a or "Token" in a for a in argv) and "--idle=once" in argv
         assert not any(a.startswith(("--wayland-app-id=", "--title=")) for a in argv), argv
+        # What is playing stays off the command line, which other accounts can read.
+        assert not any("media-title" in a or "Arrival" in a for a in argv), argv
+        assert any(l.get("command", [None])[:2] == ["set_property", "force-media-title"] and "Arrival" in l["command"][2] for l in lines), lines
         assert not os.path.exists(hypr_log) or open(hypr_log).read() == "", "a plain mpv's window is left alone"
         load = next(l["command"] for l in lines if "command" in l and l["command"][0] == "loadfile")
         assert load[1].startswith("http://127.0.0.1:") and "/jf/Videos/" + ARRIVAL + "/stream" in load[1] and "ApiKey" not in load[1]
