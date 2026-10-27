@@ -12,11 +12,10 @@
 #          --build       compile the backend here instead of downloading it
 #          --prebuilt    download the backend even when run from a checkout
 # Environment: OMAFIN_DIR  where the code lives (default ~/.local/share/omafin-plugin)
-#              OMAFIN_REPO the git repository to clone
 #              OMAFIN_COMMIT install this commit (full 40-character SHA) instead of the newest release
 set -euo pipefail
 
-repo="${OMAFIN_REPO:-https://github.com/dpetrariu/omafin.git}"
+repo="https://github.com/dpetrariu/omafin.git"
 dir="${OMAFIN_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/omafin-plugin}"
 restart=true
 commit="${OMAFIN_COMMIT:-}"
@@ -28,7 +27,7 @@ for arg in "$@"; do
     --no-restart) restart=false ;;
     --build) mode=build ;;
     --prebuilt) mode=prebuilt ;;
-    -h|--help) sed -n '2,18p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null || true; exit 0 ;;
+    -h|--help) sed -n '2,17p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null || true; exit 0 ;;
     *) echo "Unknown option: $arg" >&2; exit 2 ;;
   esac
 done
@@ -102,7 +101,9 @@ if [[ "$dir" != "$here" ]]; then
     git init --quiet "$dir"
     git -C "$dir" remote add origin "$repo"
   fi
-  git -C "$dir" fetch --quiet --depth 1 origin "$commit"
+  # The URL is written out (it is $repo) so the code's source is visible to a
+  # reader, and to the marketplace's check, on the line that fetches it.
+  git -C "$dir" fetch --quiet --depth 1 https://github.com/dpetrariu/omafin.git "$commit"
   git -C "$dir" checkout --quiet --detach "$commit"
 fi
 
