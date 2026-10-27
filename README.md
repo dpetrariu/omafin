@@ -48,7 +48,7 @@ o.bind("SUPER + SHIFT + J", "Omafin", "omarchy shell shell toggle dpetrariu.omaf
 
 ### Update and uninstall
 
-Run the installer again to update. To remove it:
+Run the installer again to update to the newest release (`OMAFIN_COMMIT=<full commit SHA>` installs a specific commit instead). To remove it:
 
 ```bash
 ~/.local/share/omafin-plugin/scripts/uninstall.sh          # keeps your settings

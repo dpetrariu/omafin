@@ -5,19 +5,22 @@
 #
 # or, from a checkout: ./install.sh
 #
-# It gets the code (or updates it), builds the backend, links the plugin into
-# Omarchy, enables it and restarts the shell. Running it again updates.
+# It gets the newest release (or updates to it), builds the backend, links the
+# plugin into Omarchy, enables it and restarts the shell. Running it again updates.
 #
 # Options: --no-restart  leave the shell running (restart it yourself later)
 #          --build       compile the backend here instead of downloading it
 #          --prebuilt    download the backend even when run from a checkout
 # Environment: OMAFIN_DIR  where the code lives (default ~/.local/share/omafin-plugin)
 #              OMAFIN_REPO the git repository to clone
+#              OMAFIN_COMMIT install this commit (full 40-character SHA) instead of the newest release
 set -euo pipefail
 
 repo="${OMAFIN_REPO:-https://github.com/dpetrariu/omafin.git}"
 dir="${OMAFIN_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/omafin-plugin}"
 restart=true
+commit="${OMAFIN_COMMIT:-}"
+release=""
 mode=auto
 
 for arg in "$@"; do
@@ -25,7 +28,7 @@ for arg in "$@"; do
     --no-restart) restart=false ;;
     --build) mode=build ;;
     --prebuilt) mode=prebuilt ;;
-    -h|--help) sed -n '2,17p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null || true; exit 0 ;;
+    -h|--help) sed -n '2,18p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null || true; exit 0 ;;
     *) echo "Unknown option: $arg" >&2; exit 2 ;;
   esac
 done
@@ -72,16 +75,35 @@ if ! command -v git >/dev/null; then
   sudo pacman -S --needed --noconfirm git
 fi
 
+# The newest release tag (vX.Y.Z) and the commit it points to, from the remote.
+newest_release() {
+  git ls-remote --tags "$repo" 'refs/tags/v*' | awk '
+    { ref = $2; sub("refs/tags/", "", ref); peeled = sub(/\^\{\}$/, "", ref)
+      if (ref !~ /^v[0-9]+\.[0-9]+\.[0-9]+$/) next
+      if (peeled || !(ref in sha)) sha[ref] = $1 }
+    END { for (ref in sha) print ref, sha[ref] }' | sort -V | tail -n 1
+}
+
+# An install runs one exact commit, checked out detached: the newest release's,
+# or OMAFIN_COMMIT's. Never whatever main holds at the moment, which can move
+# after a release was reviewed.
 if [[ "$dir" != "$here" ]]; then
+  if [[ -z "$commit" ]]; then
+    read -r release commit < <(newest_release) || true
+    [[ -n "$commit" ]] || fail "No Omafin release found in $repo."
+  fi
+  [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail "OMAFIN_COMMIT must be a full 40-character commit SHA."
   if [[ -d "$dir/.git" ]]; then
-    say "Updating $dir"
-    git -C "$dir" pull --ff-only --quiet
+    say "Updating $dir to ${release:-$commit}"
   elif [[ -e "$dir" ]]; then
     fail "$dir exists but is not an Omafin checkout; move it away or set OMAFIN_DIR."
   else
-    say "Downloading Omafin into $dir"
-    git clone --quiet --depth 1 "$repo" "$dir"
+    say "Downloading Omafin ${release:-$commit} into $dir"
+    git init --quiet "$dir"
+    git -C "$dir" remote add origin "$repo"
   fi
+  git -C "$dir" fetch --quiet --depth 1 origin "$commit"
+  git -C "$dir" checkout --quiet --detach "$commit"
 fi
 
 # A checkout someone is working in builds its own backend; an install
