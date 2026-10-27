@@ -537,6 +537,16 @@ def main():
         h.key("settings", 1.0)
         assert h.value("!!hooks.settings.item")
         h.shot("14-settings")
+        # An http:// address across the internet is called out; a home one is not.
+        h.js("hooks.settings.item.awayAddress = 'http://192.168.1.20:8096'")
+        time.sleep(0.3)
+        assert h.value("hooks.settings.item.warnsUnencrypted") is False
+        h.js("hooks.settings.item.awayAddress = 'http://tv.example.com'")
+        time.sleep(0.3)
+        assert h.value("hooks.settings.item.warnsUnencrypted") is True
+        h.js("(function(f) { f.contentY = f.contentHeight - f.height })(hooks.settings.item.children.filter(function(c) { return c.contentHeight !== undefined })[0])")
+        time.sleep(0.3)
+        h.shot("14b-settings-unencrypted")
         h.key("settings", 0.5)
         h.nav("go:home", 1.0)
         h.js("app.narrowOverride = true")

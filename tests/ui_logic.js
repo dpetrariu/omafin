@@ -176,4 +176,14 @@ test("wire frames are checked before use", () => {
   assert.strictEqual(Wire.notification({ jsonrpc: "2.0", method: "sync.changed", params: {} }), null)
 })
 
+test("an http:// address is called out only when it crosses the internet", () => {
+  for (const home of ["http://192.168.1.10:8096", "http://10.0.0.5", "http://172.20.1.1:8096", "http://127.0.0.1:8096",
+    "http://nas:8096", "http://nas.local:8096", "http://jellyfin.home.arpa", "http://100.101.102.103:8096",
+    "http://media.tail1234.ts.net", "http://[::1]:8096", "http://[fd00::5]:8096", "https://tv.example.com", "", "192.168.1.10", "nas:8096"])
+    assert.strictEqual(Format.plainOverInternet(home), false, home)
+  for (const away of ["http://tv.example.com", "HTTP://tv.example.com:8096/jellyfin", "http://203.0.113.7:8096",
+    "http://172.32.0.1", "http://[2001:db8::1]:8096", "http://tv.example.com.", "tv.example.com:8096"])
+    assert.strictEqual(Format.plainOverInternet(away), true, away)
+})
+
 console.log((process.exitCode ? "some UI logic tests failed" : "ui logic: all passed") + " (" + passed + " passed)")

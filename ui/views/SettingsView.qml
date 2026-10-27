@@ -17,6 +17,9 @@ Item {
   property string error: ""
   property var cache: null
   readonly property var p: service.playbackPrefs
+  // For the UI test: the away address, and whether it is called out as unencrypted.
+  property alias awayAddress: wan.text
+  readonly property bool warnsUnencrypted: awayWarning.visible
 
   signal closed()
   signal toast(string text, string tone)
@@ -257,9 +260,11 @@ Item {
       Note { text: "Omafin tries the home address first and the away address when home does not answer." }
       Note { text: "Home address (LAN)" }
       TextField { id: lan; width: parent.width; placeholderText: "http://192.168.1.10:8096"; font.family: root.theme.font; font.pixelSize: root.theme.body }
+      Note { visible: Format.plainOverInternet(lan.text); text: "Not encrypted: with http:// your password, session and what you watch cross the internet readable by anyone on the way. Use an https:// address when away from home."; color: root.theme.urgent }
       Text { visible: !!root.test && !!root.test.lan; text: root.result(root.test ? root.test.lan : null); textFormat: Text.PlainText; color: root.test && root.test.lan && root.test.lan.ok ? root.theme.accent : root.theme.urgent; font.family: root.theme.font; font.pixelSize: root.theme.small }
       Note { text: "Away address (optional)" }
       TextField { id: wan; width: parent.width; placeholderText: "https://tv.example.com"; font.family: root.theme.font; font.pixelSize: root.theme.body }
+      Note { id: awayWarning; visible: Format.plainOverInternet(wan.text); text: "Not encrypted: with http:// your password, session and what you watch cross the internet readable by anyone on the way. Use an https:// address when away from home."; color: root.theme.urgent }
       Text { visible: !!root.test && !!root.test.wan; text: root.result(root.test ? root.test.wan : null); textFormat: Text.PlainText; color: root.test && root.test.wan && root.test.wan.ok ? root.theme.accent : root.theme.urgent; font.family: root.theme.font; font.pixelSize: root.theme.small }
       Text {
         visible: root.error !== ""

@@ -341,3 +341,28 @@ function isPlayable(item) {
 function opensGrid(item) {
   return !!item && (item.type === "BoxSet" || item.type === "Folder" || item.type === "CollectionFolder" || item.type === "Playlist" || item.type === "UserView")
 }
+
+// Whether a server address sends the session unencrypted across the
+// internet: http:// to a host that is not on the home network. Tailscale
+// (100.64.0.0/10, *.ts.net) is encrypted underneath and counts as home.
+// An address typed without a scheme is saved as http://.
+function plainOverInternet(address) {
+  var text = String(address || "").trim()
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) text = "http://" + text
+  var m = /^http:\/\/(\[[^\]]*\]|[^\/:?#]*)/i.exec(text)
+  if (!m) return false
+  var host = m[1].toLowerCase().replace(/\.$/, "")
+  if (host === "") return false
+  if (host.charAt(0) === "[") {
+    var v6 = host.slice(1, -1)
+    return !(v6 === "::1" || /^f[cd]/.test(v6) || /^fe[89ab]/.test(v6))
+  }
+  var ip = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(host)
+  if (ip) {
+    var a = Number(ip[1]), b = Number(ip[2])
+    return !(a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+      || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127))
+  }
+  if (host.indexOf(".") < 0) return false
+  return !/\.(local|lan|home|internal|localdomain|home\.arpa|ts\.net)$/.test(host) && host !== "localhost"
+}

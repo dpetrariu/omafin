@@ -1,6 +1,7 @@
 import QtQuick
 import qs.Ui
 import "../components"
+import "../lib/Format.js" as Format
 
 // First run: the server address, then signing in, with Quick Connect (a
 // code you approve in another Jellyfin app) when the server offers it, or
@@ -129,6 +130,15 @@ Item {
         font.family: root.theme.font
         font.pixelSize: root.theme.body
         onAccepted: root.probe()
+      }
+      Text {
+        visible: Format.plainOverInternet(url.text)
+        width: parent.width
+        wrapMode: Text.Wrap
+        text: "Not encrypted: with http:// your password, session and what you watch cross the internet readable by anyone on the way. Use an https:// address when away from home."
+        color: root.theme.urgent
+        font.family: root.theme.font
+        font.pixelSize: root.theme.small
       }
       TextButton {
         anchors.right: parent.right
