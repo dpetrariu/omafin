@@ -219,6 +219,30 @@ def main():
         assert state(port)["positions"].get(CASABLANCA) == 30, state(port)["positions"]
         print("ok: offline viewing is sent when the server is back")
 
+        # A short play online: Jellyfin forgets a place under 5% of the
+        # runtime, the download keeps it, and its page still offers Resume.
+        short = b.call("play.prepare", {"id": DUNE, "start": 0})["session"]
+        b.call("item.setPlayed", {"id": DUNE, "played": False})
+        b.call("play.report", {"session": short, "event": "start", "position": 0})
+        assert b.call("play.report", {"session": short, "event": "stop", "position": 2})["reported"] is True
+        assert state(port)["positions"].get(DUNE) is None, "the mock should forget a place under 5%"
+        assert entry(b, DUNE)["card"]["user"]["position"] == 2
+        assert b.call("item.get", {"id": DUNE})["user"]["position"] == 2, "the page should resume where the download stopped"
+        # Marks reach the download's card, so an old place never brings Resume back.
+        b.call("item.setPlayed", {"id": DUNE, "played": True})
+        assert entry(b, DUNE)["card"]["user"]["played"] is True and not entry(b, DUNE)["card"]["user"]["position"]
+        b.call("item.setPlayed", {"id": DUNE, "played": False})
+        assert not b.call("item.get", {"id": DUNE})["user"]["position"]
+        # A place the server knows (from another device) becomes the download's too.
+        b.call("item.clearResume", {"id": CASABLANCA})
+        assert not entry(b, CASABLANCA)["card"]["user"]["position"]
+        other = b.call("play.prepare", {"id": CASABLANCA, "start": 0})["session"]
+        b.call("play.report", {"session": other, "event": "start", "position": 0})
+        b.call("play.report", {"session": other, "event": "stop", "position": 40})
+        assert b.call("item.get", {"id": CASABLANCA})["user"]["position"] == 40
+        assert entry(b, CASABLANCA)["card"]["user"]["position"] == 40
+        print("ok: a download resumes where it stopped, and marks reach it")
+
         b.call("downloads.remove", {"id": "a00000000000000000000000000000d3"})
         assert not os.path.exists(os.path.join(season, "S01E01 - Episode 1.mp4")) and os.path.exists(series_meta)
         for ep in ("a00000000000000000000000000000d4", "a00000000000000000000000000000d5"):

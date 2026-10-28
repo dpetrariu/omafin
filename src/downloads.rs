@@ -476,6 +476,34 @@ impl Downloads {
     }
 }
 
+impl Downloads {
+    /// What the server says about a download, learned while online: the card
+    /// follows it, so the Downloaded list and Resume agree with other
+    /// devices. A place not yet sent to the server stays, unless `mark` (a
+    /// mark made just now, newer than that place).
+    pub fn adopt_user(&self, id: &str, user: &Value, mark: bool) -> Option<Entry> {
+        let entry = self
+            .with(id, |e| {
+                if e.pending.is_object() && !mark {
+                    return None;
+                }
+                let card = e.card["user"].as_object_mut()?;
+                let before = card.clone();
+                for key in ["played", "position", "percent", "favorite"] {
+                    if let Some(value) = user.get(key) {
+                        card.insert(key.into(), value.clone());
+                    }
+                }
+                let changed = *card != before || e.pending.is_object();
+                e.pending = Value::Null;
+                changed.then(|| e.clone())
+            })
+            .flatten()?;
+        self.save();
+        Some(entry)
+    }
+}
+
 fn read_json(path: &Path) -> Option<Value> {
     serde_json::from_slice(&std::fs::read(path).ok()?).ok()
 }

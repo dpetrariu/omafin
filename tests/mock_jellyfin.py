@@ -593,6 +593,9 @@ class Handler(BaseHTTPRequestHandler):
                     pos = body.get("PositionTicks", 0)
                     if pos >= item.get("RunTimeTicks", 1) * 0.9:
                         data["Played"], data["PlaybackPositionTicks"] = True, 0
+                    elif pos < item.get("RunTimeTicks", 1) * 0.05:
+                        # Jellyfin keeps no resume point under 5% of the runtime.
+                        data["PlaybackPositionTicks"] = 0
                     else:
                         data["PlaybackPositionTicks"] = pos
                     data["LastPlayedDate"] = "2026-10-25T12:00:00.0000000Z"

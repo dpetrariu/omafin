@@ -440,6 +440,22 @@ pub async fn item_get(app: &App, params: &Value) -> Result<Value> {
         Err(err) => return Err(err),
     };
     let mut out = details(&item, id);
+    // A download keeps its own place: Jellyfin forgets one under 5% of the
+    // runtime, and may not have heard of the last offline play yet.
+    if let Some(entry) = app.downloads.get(id) {
+        let server = out["user"].clone();
+        let server_knows = server["played"] == true || server["position"].as_f64().is_some_and(|p| p > 0.0);
+        if server_knows && entry.pending.is_null() {
+            if let Some(e) = app.downloads.adopt_user(id, &server, false) {
+                crate::downloads::notify_entry(app, &e);
+            }
+        } else if entry.card["user"]["played"] != true {
+            if let Some(position) = entry.card["user"]["position"].as_f64().filter(|p| *p > 0.0) {
+                out["user"]["position"] = json!(position);
+                out["user"]["percent"] = entry.card["user"]["percent"].clone();
+            }
+        }
+    }
     if item["Type"] == "Series" {
         let next = app
             .jellyfin
@@ -616,7 +632,16 @@ pub async fn set_played(app: &App, params: &Value) -> Result<Value> {
             .post(&format!("/UserItems/{id}/UserData?userId={uid}"), json!({ "PlaybackPositionTicks": ticks }))
             .await?;
     }
-    Ok(user_data(&json!({ "UserData": data })))
+    Ok(marked(app, id, user_data(&json!({ "UserData": data }))))
+}
+
+/// A mark on a download goes onto its card too, so an old place there never
+/// brings Resume back.
+fn marked(app: &App, id: &str, user: Value) -> Value {
+    if let Some(e) = app.downloads.adopt_user(id, &user, true) {
+        crate::downloads::notify_entry(app, &e);
+    }
+    user
 }
 
 pub async fn set_favorite(app: &App, params: &Value) -> Result<Value> {
@@ -636,7 +661,7 @@ pub async fn clear_resume(app: &App, params: &Value) -> Result<Value> {
         .jellyfin
         .post(&format!("/UserItems/{id}/UserData?userId={uid}"), json!({ "PlaybackPositionTicks": 0 }))
         .await?;
-    Ok(user_data(&json!({ "UserData": data })))
+    Ok(marked(app, id, user_data(&json!({ "UserData": data }))))
 }
 
 #[cfg(test)]
