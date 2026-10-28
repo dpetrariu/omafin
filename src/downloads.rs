@@ -809,17 +809,21 @@ async fn add_one(app: &App, id: &str, source: Option<&str>, season_checked: u64)
     // Two titles that clean to the same name keep apart. A film owns its
     // whole folder (removing it trashes the folder), so a second film of the
     // same name gets a folder of its own; episodes share a season folder and
-    // only need their own file name.
+    // only need their own file name. What is already on disk counts too: a
+    // download folder can be a library of the person's own, whose files
+    // Omafin must never replace or trash.
     {
         let entries = app.downloads.entries.lock().unwrap();
         let tag = &id[..8];
+        let taken = |p: &Path| !matches!(p.try_exists(), Ok(false));
         if card["type"] == "Episode" {
-            if entries.iter().any(|e| e.id != id && e.folder == folder.to_string_lossy() && e.file == file) {
+            let on_disk = taken(&folder.join(&file)) || taken(&folder.join(format!("{file}.part")));
+            if on_disk || entries.iter().any(|e| e.id != id && e.folder == folder.to_string_lossy() && e.file == file) {
                 let stem = file.trim_end_matches(&format!(".{ext}")).to_string();
                 meta = meta.with_file_name(format!("{stem} [{tag}]"));
                 file = format!("{stem} [{tag}].{ext}");
             }
-        } else if entries.iter().any(|e| e.id != id && e.folder == folder.to_string_lossy()) {
+        } else if taken(&folder) || entries.iter().any(|e| e.id != id && e.folder == folder.to_string_lossy()) {
             let name = format!("{} [{tag}]", folder.file_name().and_then(|n| n.to_str()).unwrap_or("Untitled"));
             folder = folder.with_file_name(&name);
             meta = folder.join(".omafin");
@@ -968,8 +972,13 @@ pub fn move_to_trash(path: &Path) -> std::io::Result<PathBuf> {
         .join("Trash");
     let files = base.join("files");
     let info = base.join("info");
-    std::fs::create_dir_all(&files)?;
-    std::fs::create_dir_all(&info)?;
+    // The trash is the user's alone (the spec asks for 0700): the names in it,
+    // and the paths in its .trashinfo files, say what was there.
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&files)?;
+        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&info)?;
+    }
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("video").to_string();
     let mut target = files.join(&name);
     let mut n = 1;
@@ -984,7 +993,12 @@ pub fn move_to_trash(path: &Path) -> std::io::Result<PathBuf> {
     let encoded = percent_encoding::utf8_percent_encode(&absolute.to_string_lossy(), PATH_SET).to_string();
     let stamp = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S");
     let info_file = info.join(format!("{target_name}.trashinfo"));
-    std::fs::write(&info_file, format!("[Trash Info]\nPath={encoded}\nDeletionDate={stamp}\n"))?;
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&info_file)?;
+        f.write_all(format!("[Trash Info]\nPath={encoded}\nDeletionDate={stamp}\n").as_bytes())?;
+    }
     // Only a move: a download on another drive than the trash is refused
     // rather than copied (and never deleted outright).
     if let Err(err) = std::fs::rename(path, &target) {
@@ -1248,7 +1262,11 @@ async fn transfer(app: &Arc<App>, entry: &Entry) -> Outcome {
             e.modified = modified.clone();
         }
     });
-    let file = std::fs::OpenOptions::new().create(true).write(true).truncate(have == 0).open(&part);
+    // Never through a link someone planted where the .part file goes.
+    let file = {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new().create(true).write(true).truncate(have == 0).custom_flags(libc::O_NOFOLLOW).open(&part)
+    };
     let file = match file {
         Ok(f) => f,
         Err(err) => return Outcome::Fail(format!("Could not write {}: {err}", part.display())),
@@ -1325,6 +1343,10 @@ async fn transfer(app: &Arc<App>, entry: &Entry) -> Outcome {
         let _ = std::fs::remove_file(&part);
         app.downloads.with(&entry.id, |e| e.bytes = 0);
         return Outcome::Retry("The file came out larger than the server said; starting over".into());
+    }
+    // A file that appeared there meanwhile is someone's; never replace it.
+    if !matches!(entry.video().try_exists(), Ok(false)) {
+        return Outcome::Fail(format!("{} is already there; Omafin will not replace it", entry.video().display()));
     }
     if let Err(err) = std::fs::rename(&part, entry.video()) {
         return Outcome::Fail(format!("Could not finish the file: {err}"));

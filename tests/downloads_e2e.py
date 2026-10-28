@@ -153,6 +153,8 @@ def main():
         assert trashed == [os.path.join(trash, "files", "Blade Runner (1982)")], trashed
         assert os.path.exists(os.path.join(trash, "files", "Blade Runner (1982)", "Blade Runner (1982).mp4"))
         info = open(os.path.join(trash, "info", "Blade Runner (1982).trashinfo")).read()
+        assert all(os.stat(os.path.join(trash, d)).st_mode & 0o777 == 0o700 for d in ("", "files", "info")), "the trash is the user's alone"
+        assert os.stat(os.path.join(trash, "info", "Blade Runner (1982).trashinfo")).st_mode & 0o777 == 0o600
         assert "Path=" + film.replace(" ", "%20").replace("(", "%28").replace(")", "%29") in info, info
         assert not os.path.exists(film) and entry(b, BLADE) is None
         print("ok: removing moves the download to the trash")
@@ -272,6 +274,21 @@ def main():
         assert any(e["params"].get("removed") == fargo for e in b.events if e.get("method") == "downloads.changed"), "the deleted folder was not noticed"
         assert entry(b, fargo) is None
         print("ok: a folder deleted in the file manager leaves Downloaded")
+
+        # The download folder can be a library of one's own: a film already
+        # there is never replaced, and removing the download never trashes it.
+        own = os.path.join(videos, "Movies", "Edge of Tomorrow (2014)")
+        os.makedirs(own, exist_ok=True)
+        for name, data in (("Edge of Tomorrow (2014).mp4", b"my own copy"), ("extras.txt", b"mine")):
+            with open(os.path.join(own, name), "wb") as f:
+                f.write(data)
+        b.call("downloads.add", {"id": EDGE})
+        edge = wait_state(b, EDGE, "done")
+        assert os.path.dirname(edge["path"]) != own, edge["path"]
+        assert open(os.path.join(own, "Edge of Tomorrow (2014).mp4"), "rb").read() == b"my own copy"
+        b.call("downloads.remove", {"id": EDGE})
+        assert sorted(os.listdir(own)) == ["Edge of Tomorrow (2014).mp4", "extras.txt"], os.listdir(own)
+        print("ok: a film already in the folder is never replaced or trashed")
 
         print("downloads e2e: all passed")
     finally:
