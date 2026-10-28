@@ -530,6 +530,28 @@ def main():
         h.js(f"service.updateSettings({{ serverUrl: 'http://127.0.0.1:{port}' }})")
         wait_for("back online", lambda: h.value("service.serverError") == "", 15)
         wait_for("sent to the server", lambda: (state(port)["positions"].get("a00000000000000000000000000000d4") or 0) >= 19, 10)
+        # Played again from its card, it carries on where it stopped.
+        h.js("app.playItem(service.downloadOf('a00000000000000000000000000000d4').card, { restart: false })")
+        wait_for("plays again from the file", lambda: h.value("hooks.player.started") is True, 20)
+        time.sleep(1.5)
+        resumed = h.value("hooks.player.position")
+        assert resumed >= 15, f"a download started at {resumed}s instead of where it stopped"
+        # Full screen, the subtitle menu by the bottom edge stays on screen.
+        h.js("app.fullscreen = true")
+        time.sleep(0.6)
+        # As many subtitle tracks as a disc rip carries, taller than the window.
+        h.js("hooks.player.info.subtitles = Array.from({ length: 40 }, function(_, i) { return { index: 100 + i, language: 'eng', title: 'Track ' + i, codec: 'subrip', isExternal: false } })")
+        h.js("hooks.player.handleKey('subtitlePicker')")
+        time.sleep(0.6)
+        assert h.value("hooks.menu.visible") is True and h.value("hooks.menu.items.length") == 41
+        box = h.value("({ top: hooks.menu.y, bottom: hooks.menu.y + hooks.menu.height, height: hooks.menu.parent.height })")
+        assert box["top"] >= 0 and box["bottom"] <= box["height"], f"the menu ran off the window: {box}"
+        assert h.value("hooks.menu.contentItem.scroller.interactive") is True, "a long menu scrolls"
+        h.shot("22-fullscreen-subtitle-menu")
+        h.js("hooks.menu.close()")
+        h.js("app.fullscreen = false")
+        time.sleep(0.3)
+        h.key("closePlayer", 1.0)
         h.nav("go:home", 1.0)
         print("ok: Downloaded, offline details, local playback and sync")
 

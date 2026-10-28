@@ -16,6 +16,8 @@ QQC.Popup {
   signal activated(string id)
 
   padding: theme.space(4)
+  // Qt keeps a popup with margins inside the window, whatever happens.
+  margins: theme.space(4)
   modal: false
   focus: true
   closePolicy: QQC.Popup.CloseOnEscape | QQC.Popup.CloseOnPressOutside
@@ -26,6 +28,7 @@ QQC.Popup {
   property real widest: 0
   onItemsChanged: widest = 0
   readonly property real maxWidth: parent ? parent.width - theme.space(16) : theme.space(600)
+  readonly property real maxHeight: parent ? parent.height - theme.space(8) - padding * 2 : theme.space(600)
   readonly property bool hasIcons: items.some(function(i) { return !!i.icon })
 
   // Open beside `item` at (x, y) in its coordinates, flipping and clamping so
@@ -33,16 +36,33 @@ QQC.Popup {
   function openAt(item, x, y) {
     if (!item || !parent || items.length === 0) return
     var p = item.mapToItem(parent, x, y)
+    anchorX = p.x
+    anchorY = p.y
+    anchorTop = belowTop >= 0 ? belowTop : p.y
+    belowTop = -1
     highlighted = -1
     open()
+    if (contentItem.scroller) contentItem.scroller.contentY = 0
     place(p.x, p.y)
     contentItem.forceActiveFocus()
   }
 
+  // Where it was opened, to place it again once its rows are measured: at
+  // open() the size is not known yet, so a menu under a button at the very
+  // bottom (the player's, full screen) would run off the window.
+  property real anchorX: 0
+  property real anchorY: 0
+  property real anchorTop: 0
+  onImplicitHeightChanged: if (visible) place(anchorX, anchorY)
+  onImplicitWidthChanged: if (visible) place(anchorX, anchorY)
+
+  // Under a button, or above it when the bottom of the window is too near.
   function openBelow(item) {
     trigger = item
+    belowTop = item && parent ? item.mapToItem(parent, 0, 0).y : -1
     openAt(item, 0, item.height + theme.space(2))
   }
+  property real belowTop: -1
 
   function place(px, py) {
     var w = implicitWidth
@@ -50,7 +70,9 @@ QQC.Popup {
     var maxX = parent.width - w - theme.space(4)
     var maxY = parent.height - h - theme.space(4)
     x = Math.max(theme.space(4), Math.min(px, maxX))
-    y = py > maxY && py - h > 0 ? py - h : Math.max(theme.space(4), Math.min(py, maxY))
+    // Too low to fit below: open upward from the top of what opened it.
+    var above = anchorTop - h - (anchorTop < py ? theme.space(2) : 0)
+    y = py > maxY && above > 0 ? above : Math.max(theme.space(4), Math.min(py, maxY))
   }
 
   function move(step) {
@@ -61,9 +83,20 @@ QQC.Popup {
       var item = items[i]
       if (!item.separator && item.enabled !== false) {
         highlighted = i
+        reveal(i)
         return
       }
     }
+  }
+
+  // Scroll a long menu so the highlighted row shows.
+  function reveal(index) {
+    var flick = contentItem ? contentItem.scroller : null
+    if (!flick) return
+    var top = 0
+    for (var k = 0; k < index; k++) top += items[k].separator ? theme.space(9) : rowHeight
+    if (top < flick.contentY) flick.contentY = top
+    else if (top + rowHeight > flick.contentY + flick.height) flick.contentY = top + rowHeight - flick.height
   }
 
   function activate(index) {
@@ -82,8 +115,11 @@ QQC.Popup {
   }
 
   contentItem: FocusScope {
+    readonly property alias scroller: scroller
     implicitWidth: Math.min(root.maxWidth - root.padding * 2, Math.max(root.theme.space(200), root.widest))
-    implicitHeight: column.implicitHeight
+    // Never taller than the window: a film's long list of subtitle tracks
+    // scrolls instead of running off the screen.
+    implicitHeight: Math.min(column.implicitHeight, root.maxHeight)
     focus: true
 
     Keys.onPressed: function(event) {
@@ -95,6 +131,15 @@ QQC.Popup {
         root.activate(root.highlighted); event.accepted = true
       }
     }
+
+    Flickable {
+      id: scroller
+      anchors.fill: parent
+      contentHeight: column.implicitHeight
+      interactive: contentHeight > height
+      boundsBehavior: Flickable.StopAtBounds
+      clip: true
+      QQC.ScrollBar.vertical: QQC.ScrollBar { policy: scroller.interactive ? QQC.ScrollBar.AsNeeded : QQC.ScrollBar.AlwaysOff }
 
     Column {
       id: column
@@ -177,6 +222,7 @@ QQC.Popup {
           }
         }
       }
+    }
     }
   }
 }
