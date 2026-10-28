@@ -350,9 +350,10 @@ fn layout(root: &Path, card: &Value, ext: &str) -> (PathBuf, String, PathBuf, Pa
         let meta = folder.join(".omafin").join(&stem);
         (folder, format!("{stem}.{ext}"), meta, show.join(".omafin").join("series"))
     } else {
+        // Some libraries already name a film "Title (2001)".
         let title = match card["year"].as_i64() {
-            Some(year) => clean_name(&format!("{name} ({year})")),
-            None => clean_name(name),
+            Some(year) if !name.trim_end().ends_with(&format!("({year})")) => clean_name(&format!("{name} ({year})")),
+            _ => clean_name(name),
         };
         let folder = root.join("Movies").join(&title);
         let meta = folder.join(".omafin");
@@ -1481,6 +1482,9 @@ mod tests {
         assert_eq!(file, "Dune Part Two (2024).mkv");
         assert_eq!(meta, folder.join(".omafin"));
         assert_eq!(series, PathBuf::new());
+        // A name that already ends with its year does not get it twice.
+        let named = json!({ "type": "Movie", "name": "American Pie 2 (2001)", "year": 2001 });
+        assert_eq!(layout(root, &named, "mov").1, "American Pie 2 (2001).mov");
         let ep = json!({ "type": "Episode", "name": "Grace", "seriesName": "Homeland", "parentIndex": 1, "index": 2 });
         let (folder, file, meta, series) = layout(root, &ep, "mp4");
         assert_eq!(folder, Path::new("/v/Omafin/Shows/Homeland/Season 01"));
