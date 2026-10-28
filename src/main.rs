@@ -78,6 +78,11 @@ async fn check() -> ExitCode {
             println!("{url}: no Jellyfin server answered");
             continue;
         };
+        // The session goes only to the server signed in to, as in the app.
+        if !jellyfin::same_server(&info, Some(settings.server_id.as_str()).filter(|s| !s.is_empty())) {
+            println!("{url}: a different Jellyfin server answers here; not sending it your session");
+            continue;
+        }
         match client.unsaved(reqwest::Method::GET, &format!("{url}/Users/Me"), Some(&token), None).await {
             Ok(me) => {
                 ok = true;

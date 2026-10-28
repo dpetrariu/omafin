@@ -178,7 +178,13 @@ async fn finish_sign_in(app: &App, url: &str, auth: &Value) -> Result<Value> {
         }
         settings.user_id = user_id;
         settings.user_name = auth.pointer("/User/Name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        settings.server_id = info.get("Id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        // The sign-in itself names the server; the public info is the fallback.
+        settings.server_id = auth
+            .get("ServerId")
+            .or_else(|| info.get("Id"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         settings.server_name = info.get("ServerName").and_then(|v| v.as_str()).unwrap_or("").to_string();
         settings.save(&app.paths)?;
     }

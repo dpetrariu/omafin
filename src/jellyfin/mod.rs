@@ -346,7 +346,11 @@ pub fn q(value: &str) -> String {
 /// no saved Id (a sign-in from before Omafin kept one) any server counts.
 pub fn same_server(info: &Value, expected: Option<&str>) -> bool {
     match expected {
-        Some(id) => info.get("Id").and_then(|v| v.as_str()) == Some(id),
+        // Ids compare as GUIDs: with or without dashes, in any case.
+        Some(id) => {
+            let norm = |s: &str| s.chars().filter(|c| *c != '-').collect::<String>().to_ascii_lowercase();
+            info.get("Id").and_then(|v| v.as_str()).map(norm) == Some(norm(id))
+        }
         None => true,
     }
 }
@@ -391,6 +395,7 @@ mod tests {
         assert!(!same_server(&theirs, Some("b5bc49c0d5bc4cde8391f85fc2d13667")));
         assert!(!same_server(&serde_json::json!({}), Some("b5bc49c0d5bc4cde8391f85fc2d13667")));
         assert!(same_server(&theirs, None));
+        assert!(same_server(&serde_json::json!({ "Id": "b5bc49c0-d5bc-4cde-8391-f85fc2d13667" }), Some("B5BC49C0D5BC4CDE8391F85FC2D13667")));
     }
 
     #[test]
