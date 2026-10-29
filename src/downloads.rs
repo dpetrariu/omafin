@@ -32,6 +32,8 @@ use crate::library::{self, str_param, user_id};
 const SPARE: u64 = 512 * 1024 * 1024;
 const PROGRESS_EVERY: Duration = Duration::from_millis(400);
 const SAVE_EVERY: Duration = Duration::from_secs(5);
+/// Names tried after the first one is taken: "Title [tag]", "Title [tag] (2)", …
+const FALLBACKS: usize = 50;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -811,23 +813,40 @@ async fn add_one(app: &App, id: &str, source: Option<&str>, season_checked: u64)
     // same name gets a folder of its own; episodes share a season folder and
     // only need their own file name. What is already on disk counts too: a
     // download folder can be a library of the person's own, whose files
-    // Omafin must never replace or trash.
+    // Omafin must never replace or trash. A fallback name is checked the same
+    // way as the first one: "Title [tag]" can be the person's too.
     {
         let entries = app.downloads.entries.lock().unwrap();
         let tag = &id[..8];
         let taken = |p: &Path| !matches!(p.try_exists(), Ok(false));
+        let fallbacks = std::iter::once(String::new()).chain((1..=FALLBACKS).map(|n| if n == 1 { format!(" [{tag}]") } else { format!(" [{tag}] ({n})") }));
+        let mut free = false;
         if card["type"] == "Episode" {
-            let on_disk = taken(&folder.join(&file)) || taken(&folder.join(format!("{file}.part")));
-            if on_disk || entries.iter().any(|e| e.id != id && e.folder == folder.to_string_lossy() && e.file == file) {
-                let stem = file.trim_end_matches(&format!(".{ext}")).to_string();
-                meta = meta.with_file_name(format!("{stem} [{tag}]"));
-                file = format!("{stem} [{tag}].{ext}");
+            let stem = file.trim_end_matches(&format!(".{ext}")).to_string();
+            for suffix in fallbacks {
+                let try_file = format!("{stem}{suffix}.{ext}");
+                let try_meta = meta.with_file_name(format!("{stem}{suffix}"));
+                let on_disk = taken(&folder.join(&try_file)) || taken(&folder.join(format!("{try_file}.part"))) || taken(&try_meta);
+                if !on_disk && !entries.iter().any(|e| e.id != id && e.folder == folder.to_string_lossy() && e.file == try_file) {
+                    (file, meta, free) = (try_file, try_meta, true);
+                    break;
+                }
             }
-        } else if taken(&folder) || entries.iter().any(|e| e.id != id && e.folder == folder.to_string_lossy()) {
-            let name = format!("{} [{tag}]", folder.file_name().and_then(|n| n.to_str()).unwrap_or("Untitled"));
-            folder = folder.with_file_name(&name);
-            meta = folder.join(".omafin");
-            file = format!("{name}.{ext}");
+        } else {
+            let base = folder.file_name().and_then(|n| n.to_str()).unwrap_or("Untitled").to_string();
+            for suffix in fallbacks {
+                let name = format!("{base}{suffix}");
+                let try_folder = folder.with_file_name(&name);
+                if !taken(&try_folder) && !entries.iter().any(|e| e.id != id && e.folder == try_folder.to_string_lossy()) {
+                    meta = try_folder.join(".omafin");
+                    file = format!("{name}.{ext}");
+                    (folder, free) = (try_folder, true);
+                    break;
+                }
+            }
+        }
+        if !free {
+            return Err(Error::invalid("The download folder already holds too many files of that name"));
         }
     }
     let entry = Entry {
@@ -912,22 +931,32 @@ pub async fn remove(app: &App, params: &Value) -> Result<Value> {
     }
     let root = PathBuf::from(&entry.folder);
     let mut trashed = Vec::new();
-    if entry.card["type"] == "Episode" {
-        // Episodes share their season folder: the video, then its own metadata.
+    if entry.card["type"] != "Episode" && only_ours(&entry) {
+        // A film's folder that holds only that film and its metadata goes whole.
+        trashed.push(move_to_trash(&root).map_err(|e| Error::internal(format!("Could not move to the trash: {e}")))?);
+    } else {
+        // Episodes share their season folder, and a film's folder can have
+        // gained someone's files: only the video, then its own metadata.
         for path in [entry.video(), PathBuf::from(&entry.meta)] {
             if matches!(path.try_exists(), Ok(true)) {
                 trashed.push(move_to_trash(&path).map_err(|e| Error::internal(format!("Could not move to the trash: {e}")))?);
             }
         }
-    } else if matches!(root.try_exists(), Ok(true)) {
-        // A film's folder holds only that film and its metadata.
-        trashed.push(move_to_trash(&root).map_err(|e| Error::internal(format!("Could not move to the trash: {e}")))?);
     }
     app.downloads.entries.lock().unwrap().retain(|e| e.id != id);
     app.downloads.save();
     tidy(app, &entry);
     notify_removed(app, id);
     Ok(json!({ "trashed": trashed }))
+}
+
+/// The download's folder is there and holds nothing but what Omafin wrote:
+/// the video, its `.part` file and the `.omafin` metadata. Anything else, or
+/// a folder that cannot be read, counts as someone's.
+fn only_ours(entry: &Entry) -> bool {
+    let ours = [entry.file.clone(), format!("{}.part", entry.file), ".omafin".to_string()];
+    let Ok(mut dir) = std::fs::read_dir(&entry.folder) else { return false };
+    dir.all(|e| e.is_ok_and(|e| ours.iter().any(|o| e.file_name() == o.as_str())))
 }
 
 /// Remove folders Omafin made that are now empty, and a show's metadata
@@ -1345,13 +1374,34 @@ async fn transfer(app: &Arc<App>, entry: &Entry) -> Outcome {
         return Outcome::Retry("The file came out larger than the server said; starting over".into());
     }
     // A file that appeared there meanwhile is someone's; never replace it.
-    if !matches!(entry.video().try_exists(), Ok(false)) {
-        return Outcome::Fail(format!("{} is already there; Omafin will not replace it", entry.video().display()));
+    match rename_noreplace(&part, &entry.video()) {
+        Ok(()) => Outcome::Done,
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            Outcome::Fail(format!("{} is already there; Omafin will not replace it", entry.video().display()))
+        }
+        Err(err) => Outcome::Fail(format!("Could not finish the file: {err}")),
     }
-    if let Err(err) = std::fs::rename(&part, entry.video()) {
-        return Outcome::Fail(format!("Could not finish the file: {err}"));
+}
+
+/// Rename that refuses to replace what is at `to`, in one step
+/// (RENAME_NOREPLACE), so nothing can appear between a check and the move.
+/// A filesystem without it (some network and FAT drives say EINVAL) gets a
+/// check just before a plain rename.
+fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = |p: &Path| std::ffi::CString::new(p.as_os_str().as_bytes()).map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput));
+    let (src, dst) = (c(from)?, c(to)?);
+    if unsafe { libc::renameat2(libc::AT_FDCWD, src.as_ptr(), libc::AT_FDCWD, dst.as_ptr(), libc::RENAME_NOREPLACE) } == 0 {
+        return Ok(());
     }
-    Outcome::Done
+    let err = std::io::Error::last_os_error();
+    if err.raw_os_error() != Some(libc::EINVAL) {
+        return Err(err);
+    }
+    if !matches!(to.try_exists(), Ok(false)) {
+        return Err(std::io::ErrorKind::AlreadyExists.into());
+    }
+    std::fs::rename(from, to)
 }
 
 /// The item, its pictures, its text subtitles and (for an episode) its
@@ -1622,5 +1672,20 @@ mod tests {
         assert!(!film.exists() && moved.join("Film (2020).mkv").exists());
         let info = std::fs::read_to_string(dir.path().join("data/Trash/info/Film (2020).trashinfo")).unwrap();
         assert!(info.contains("Path=") && info.contains("Film%20%282020%29"));
+    }
+
+    #[test]
+    fn finishing_a_download_never_replaces_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let (part, video) = (dir.path().join("Film.mkv.part"), dir.path().join("Film.mkv"));
+        std::fs::write(&part, b"download").unwrap();
+        std::fs::write(&video, b"mine").unwrap();
+        let err = rename_noreplace(&part, &video).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&video).unwrap(), b"mine");
+        assert_eq!(std::fs::read(&part).unwrap(), b"download");
+        std::fs::remove_file(&video).unwrap();
+        rename_noreplace(&part, &video).unwrap();
+        assert!(!part.exists() && std::fs::read(&video).unwrap() == b"download");
     }
 }

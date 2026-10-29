@@ -277,18 +277,36 @@ def main():
 
         # The download folder can be a library of one's own: a film already
         # there is never replaced, and removing the download never trashes it.
+        # The fallback name is the person's too ("Title [tag]", without the
+        # video in it): that folder is left alone as well.
         own = os.path.join(videos, "Movies", "Edge of Tomorrow (2014)")
+        own_tagged = os.path.join(videos, "Movies", f"Edge of Tomorrow (2014) [{EDGE[:8]}]")
         os.makedirs(own, exist_ok=True)
+        os.makedirs(own_tagged, exist_ok=True)
         for name, data in (("Edge of Tomorrow (2014).mp4", b"my own copy"), ("extras.txt", b"mine")):
             with open(os.path.join(own, name), "wb") as f:
                 f.write(data)
+        with open(os.path.join(own_tagged, "notes.txt"), "wb") as f:
+            f.write(b"mine too")
         b.call("downloads.add", {"id": EDGE})
         edge = wait_state(b, EDGE, "done")
-        assert os.path.dirname(edge["path"]) != own, edge["path"]
+        assert os.path.dirname(edge["path"]) not in (own, own_tagged), edge["path"]
         assert open(os.path.join(own, "Edge of Tomorrow (2014).mp4"), "rb").read() == b"my own copy"
         b.call("downloads.remove", {"id": EDGE})
         assert sorted(os.listdir(own)) == ["Edge of Tomorrow (2014).mp4", "extras.txt"], os.listdir(own)
-        print("ok: a film already in the folder is never replaced or trashed")
+        assert os.listdir(own_tagged) == ["notes.txt"], os.listdir(own_tagged)
+        print("ok: a film already in the folder, or under the fallback name, is never replaced or trashed")
+
+        # A file the person put in a film's folder after it downloaded stays
+        # when the download is deleted: only the video and metadata go.
+        b.call("downloads.add", {"id": EDGE})
+        edge = wait_state(b, EDGE, "done")
+        mine = os.path.join(os.path.dirname(edge["path"]), "poster I made.png")
+        with open(mine, "wb") as f:
+            f.write(b"mine")
+        b.call("downloads.remove", {"id": EDGE})
+        assert os.listdir(os.path.dirname(edge["path"])) == ["poster I made.png"], os.listdir(os.path.dirname(edge["path"]))
+        print("ok: deleting a film keeps files added to its folder")
 
         print("downloads e2e: all passed")
     finally:
