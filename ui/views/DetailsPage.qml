@@ -27,12 +27,25 @@ Item {
   // Picks for this play, before it starts. -1 means subtitles off.
   property var audioIndex: null
   property var subtitleIndex: null
+  // The version picked (one of the files Jellyfin grouped as this title);
+  // empty for the server's first.
+  property string sourceId: ""
 
   readonly property var shown: details || item
   readonly property bool isSeries: !!shown && shown.type === "Series"
   readonly property bool isEpisode: !!shown && shown.type === "Episode"
   readonly property string seriesId: !shown ? "" : isSeries ? shown.id : (shown.seriesId || "")
-  readonly property var source: details && details.sources && details.sources.length > 0 ? details.sources[0] : null
+  readonly property var sources: details && details.sources ? details.sources : []
+  // A downloaded title always plays its downloaded file, so that version it is.
+  readonly property var downloadEntry: shown ? service.downloadOf(shown.id) : null
+  readonly property bool versionPinned: !!downloadEntry && downloadEntry.state === "done" && !!downloadEntry.sourceId
+  readonly property var source: {
+    if (sources.length === 0) return null
+    var want = versionPinned ? downloadEntry.sourceId : sourceId
+    for (var i = 0; i < sources.length; i++) if (sources[i].id === want) return sources[i]
+    return sources[0]
+  }
+  readonly property int sourceIndex: source ? sources.indexOf(source) : -1
   readonly property var streams: source ? source.streams : []
   readonly property var audioStreams: streams.filter(function(s) { return s.type === "Audio" })
   readonly property var subtitleStreams: streams.filter(function(s) { return s.type === "Subtitle" })
@@ -180,13 +193,20 @@ Item {
     openItem(card)
   }
 
+  // What was picked here for playing (or downloading) this title: the
+  // version and its tracks. Nothing for anything else.
+  function picksFor(target) {
+    var out = {}
+    if (!target || !shown || target.id !== shown.id || !Format.isPlayable(shown)) return out
+    if (audioIndex !== null) out.audioIndex = audioIndex
+    if (subtitleIndex !== null) out.subtitleIndex = subtitleIndex
+    if (source && sources.length > 1) out.mediaSourceId = source.id
+    return out
+  }
+
   function playShown(restart) {
     if (!playTarget) return
-    var options = { restart: restart === true }
-    if (playTarget.id === shown.id) {
-      if (audioIndex !== null) options.audioIndex = audioIndex
-      if (subtitleIndex !== null) options.subtitleIndex = subtitleIndex
-    }
+    var options = Object.assign({ restart: restart === true }, picksFor(playTarget))
     // Picture subtitles the server may not burn in: only mpv shows them.
     var picked = subtitleStreams.filter(function(s) { return s.index === root.subtitleIndex })[0]
     if (picked && /^(pgssub|pgs|dvdsub|dvbsub|vobsub)$/i.test(picked.codec || "") && service.playbackPrefs.allowTranscoding !== true && service.mpvAvailable) {
@@ -204,6 +224,21 @@ Item {
       else activate(page.currentItem(), page.currentRow())
       return
     }
+  }
+
+  function chooseVersion(anchor) {
+    var items = sources.map(function(s, i) {
+      var mine = root.source && s.id === root.source.id
+      return { id: s.id, label: Format.versionLabel(s, i) + (mine && root.versionPinned ? " (downloaded)" : ""), shortcut: Format.versionDetail(s),
+               icon: mine ? "check" : "", enabled: !root.versionPinned || mine }
+    })
+    showMenu(items, anchor, function(id) {
+      if (root.source && id === root.source.id) return
+      // Each file has tracks of its own: pick them again from its defaults.
+      root.sourceId = id
+      root.audioIndex = null
+      root.subtitleIndex = null
+    })
   }
 
   function chooseAudio(anchor) {
@@ -405,7 +440,7 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             icon: "external"
             tooltip: "Play in mpv (m)"
-            onClicked: root.playInMpv(root.playTarget, { audioIndex: root.audioIndex, subtitleIndex: root.subtitleIndex })
+            onClicked: root.playInMpv(root.playTarget, root.picksFor(root.playTarget))
           }
           IconButton {
             visible: !!root.details && root.details.trailers && root.details.trailers.length > 0
@@ -452,10 +487,20 @@ Item {
           }
         }
 
-        // What will play: the tracks, chosen before it starts.
+        // What will play: the version and its tracks, chosen before it starts.
         Row {
-          visible: root.audioStreams.length > 0 || root.subtitleStreams.length > 0
+          visible: root.sources.length > 1 || root.audioStreams.length > 0 || root.subtitleStreams.length > 0
           spacing: root.theme.space(8)
+          TextButton {
+            id: versionButton
+            visible: root.sources.length > 1
+            theme: root.theme
+            icon: "video"
+            pill: true
+            fontSize: root.theme.small
+            text: "Version: " + Format.versionLabel(root.source, root.sourceIndex) + "..."
+            onClicked: root.chooseVersion(versionButton)
+          }
           TextButton {
             id: audioButton
             visible: root.audioStreams.length > 1

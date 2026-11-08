@@ -448,6 +448,55 @@ def main():
         wait_for("mpv reports for it", lambda: len([r for r in reports(port, BLADE) if r["kind"] == "stop"]) >= stops + 2, 15)
         print("ok: pop out")
 
+        # Versions: a film with two files offers both on its page; the one
+        # picked is what plays (window, a reload, mpv) and what downloads.
+        fargo, fargo_4k = "a0000000000000000000000000000069", "a0000000000000000000000000000073"
+        h.js(f"app.openItem({{ id: '{fargo}', type: 'Movie', name: 'Fargo' }})")
+        wait_for("Fargo's page", lambda: h.value("app.view().details ? app.view().details.id : ''") == fargo, 10)
+        assert h.value("app.view().sources.length") == 2 and h.value("app.view().source.id") == fargo
+        h.js("app.view().chooseVersion(hooks.content)")
+        assert h.value("hooks.menu.items.map(function(i) { return i.label })") == ["1080p", "2160p HDR"]
+        assert h.value("hooks.menu.items[1].shortcut").startswith("4K HEVC HDR10"), h.value("hooks.menu.items[1].shortcut")
+        time.sleep(0.4)
+        h.shot("14c-version-menu")
+        h.js(f"app.menuHandler('{fargo_4k}')")
+        wait_for("the 4K version picked", lambda: h.value("app.view().source.id") == fargo_4k, 5)
+        assert h.value("app.view().audioStreams.map(function(s) { return s.codec })") == ["truehd", "ac3"]
+        h.js("app.view().audioIndex = 2")
+        time.sleep(0.6)
+        h.shot("14d-version-picked")
+        # p on the page (the key's path, not the Play button's) plays the pick.
+        h.js("app.playItem(app.view().shown, { restart: true })")
+        wait_for("the 4K version plays", lambda: h.value("hooks.player.started") is True, 20)
+        assert h.value("hooks.player.info.sourceId") == fargo_4k and h.value("hooks.player.audioIndex") == 2
+        assert state(port)["playbackInfo"][-1]["source"] == fargo_4k
+        wait_for("its start report", lambda: any(r["kind"] == "start" and r["source"] == fargo_4k for r in reports(port, fargo)), 10)
+        h.js("hooks.player.reload({})")
+        wait_for("the reload plays", lambda: h.value("hooks.player.started") is True, 20)
+        assert h.value("hooks.player.info.sourceId") == fargo_4k, "a reload changed the version"
+        h.key("closePlayer", 1.0)
+        stops = len([r for r in reports(port, fargo) if r["kind"] == "stop"])
+        h.js("app.playInMpv(app.view().shown, {})")
+        wait_for("mpv plays the 4K version", lambda: len([r for r in reports(port, fargo) if r["kind"] == "stop"]) > stops, 15)
+        assert all(r["source"] == fargo_4k for r in reports(port, fargo)), reports(port, fargo)
+        h.js("app.downloadAction(app.view().shown, hooks.content)")
+        wait_for("the 4K version downloaded", lambda: h.value(f"service.downloadOf('{fargo}') ? service.downloadOf('{fargo}').state : ''") == "done", 30)
+        assert h.value(f"service.downloadOf('{fargo}').sourceId") == fargo_4k
+        # (Playing another version reads its static stream too, so those count here.)
+        assert {d["source"] for d in state(port)["downloads"] if d["item"] == fargo} == {fargo_4k}
+        # Downloaded, it plays its file: the other version is not on offer.
+        h.js("app.view().sourceId = ''")
+        assert h.value("app.view().source.id") == fargo_4k
+        h.js("app.view().chooseVersion(hooks.content)")
+        assert h.value("hooks.menu.items.map(function(i) { return i.enabled })") == [False, True]
+        assert h.value("hooks.menu.items[1].label") == "2160p HDR (downloaded)"
+        h.nav("back")
+        h.js("app.downloadAction(app.view().shown, hooks.content)")
+        h.js("hooks.confirm.confirm()")
+        wait_for("the download removed", lambda: h.value(f"service.downloadOf('{fargo}') === null") is True, 10)
+        h.nav("back")
+        print("ok: versions of a film: picked, played, reloaded, in mpv, downloaded")
+
         # Downloads: the button beside Play starts one, shows it coming, and
         # becomes a bin; deleting asks first and moves the file to the trash.
         control = lambda **b: urllib.request.urlopen(urllib.request.Request(

@@ -59,7 +59,7 @@ Item {
 
   // ---------------------------------------------------------------- loading
 
-  // Start an item. `options`: { restart, start, audioIndex, subtitleIndex, maxBitrate, transcode }
+  // Start an item. `options`: { restart, start, audioIndex, subtitleIndex, mediaSourceId, maxBitrate, transcode }
   function play(target, options) {
     options = options || {}
     reportStop()
@@ -83,6 +83,7 @@ Item {
     var params = { id: id, start: start }
     if (options.audioIndex !== undefined && options.audioIndex !== null) params.audioIndex = options.audioIndex
     if (options.subtitleIndex !== undefined && options.subtitleIndex !== null) params.subtitleIndex = options.subtitleIndex
+    if (options.mediaSourceId) params.mediaSourceId = options.mediaSourceId
     var bitrate = options.maxBitrate !== undefined ? options.maxBitrate : maxBitrate
     if (bitrate >= 0) params.maxBitrate = bitrate
     if (options.transcode) params.transcode = true
@@ -321,7 +322,8 @@ Item {
   property int lastSubtitle: -1
 
   function reload(change) {
-    var options = { audioIndex: audioIndex, subtitleIndex: subtitleIndex }
+    // The same version: other tracks or another quality of the same file.
+    var options = { audioIndex: audioIndex, subtitleIndex: subtitleIndex, mediaSourceId: info.sourceId }
     for (var k in change) options[k] = change[k]
     var at = position
     reportStop()
@@ -341,12 +343,12 @@ Item {
   function continueInMpv(subtitleOverride, pip) {
     if (!info) return
     var subs = subtitleOverride !== undefined && subtitleOverride !== null ? subtitleOverride : subtitleIndex
-    var params = { id: info.item.id, start: position, audioIndex: audioIndex, subtitleIndex: subs }
+    var params = { id: info.item.id, start: position, audioIndex: audioIndex, subtitleIndex: subs, mediaSourceId: info.sourceId }
     if (pip === true) params.pip = true
     reportStop()
     player.pause()
     var at = position
-    var resume = { audioIndex: audioIndex, subtitleIndex: subtitleIndex }
+    var resume = { audioIndex: audioIndex, subtitleIndex: subtitleIndex, mediaSourceId: info.sourceId }
     var id = info.item.id
     var mine = ++generation
     service.call("play.mpv", params, function(r, e) {

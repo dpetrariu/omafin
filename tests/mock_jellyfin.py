@@ -142,6 +142,21 @@ def seed():
     add({"Id": huge, "Name": "The Very Long Cut", "SortName": "the very long cut", "Type": "Movie", "MediaType": "Video", "IsFolder": False,
          "ParentId": "", "ProductionYear": 2001, "RunTimeTicks": 60 * TICKS, "DateCreated": "2026-09-01T10:00:00.0000000Z",
          "ImageTags": {"Primary": "huge"}, "MediaSources": [dict(video_source(huge)[0], Size=10 ** 14)]})
+    # Fargo comes in two versions, two files Jellyfin grouped as one film:
+    # each source is named after its file, and the second has tracks of its own.
+    fargo = STATE["items"][gid(105)]
+    hd, uhd = video_source(gid(105))[0], video_source(gid(115), container="mkv")[0]
+    hd["Name"] = "(1996) - 1080p"
+    hd["MediaStreams"][0].update({"Width": 1920, "Height": 1080, "DisplayTitle": "1080p H264 SDR"})
+    uhd["Name"] = "(1996) - 2160p HDR"
+    uhd["MediaStreams"] = [
+        {"Type": "Video", "Index": 0, "Codec": "hevc", "Width": 3840, "Height": 2160, "DisplayTitle": "4K HEVC HDR10", "VideoRangeType": "HDR10", "IsDefault": True},
+        {"Type": "Audio", "Index": 1, "Codec": "truehd", "Language": "eng", "DisplayTitle": "English - TrueHD - 7.1", "IsDefault": True, "Channels": 8},
+        {"Type": "Audio", "Index": 2, "Codec": "ac3", "Language": "fre", "DisplayTitle": "French - Dolby Digital - 5.1", "IsDefault": False, "Channels": 6},
+        {"Type": "Subtitle", "Index": 3, "Codec": "subrip", "Language": "fre", "DisplayTitle": "French - SUBRIP", "IsTextSubtitleStream": True, "IsDefault": False},
+    ]
+    uhd["Bitrate"] = 1800000
+    fargo["MediaSources"] = [hd, uhd]
     STATE["user"][gid(100)].update({"PlaybackPositionTicks": 4 * TICKS, "PlayedPercentage": 33.3, "LastPlayedDate": "2026-10-20T20:00:00.0000000Z"})
     STATE["user"][gid(102)].update({"IsFavorite": True})
     STATE["user"][gid(103)].update({"Played": True, "PlayCount": 1})
@@ -391,10 +406,15 @@ class Handler(BaseHTTPRequestHandler):
         if path != "/_state" and self.token(q):
             STATE["tokenRequests"] += 1
         m = re.match(r"^/Items/([0-9a-f]{32})/Download$", path)
+        # Another version's file comes from its static stream, like Jellyfin's.
+        other = re.match(r"^/[Vv]ideos/([0-9a-f]{32})/stream$", path)
+        source = q.get("mediaSourceId", [""])[0]
+        if other and q.get("static", [""])[0] == "true" and source and source != other.group(1):
+            m = other
         if m and method in ("GET", "HEAD"):
             # Outside the lock: a slow download must not hold up the rest.
             try:
-                return self.download(m.group(1), q)
+                return self.download(m.group(1), q, source if other else "")
             except (BrokenPipeError, ConnectionResetError):
                 return
         with LOCK:
@@ -585,7 +605,8 @@ class Handler(BaseHTTPRequestHandler):
             STATE["reports"].append({"kind": kind, "item": body.get("ItemId"), "session": body.get("PlaySessionId"),
                                      "position": body.get("PositionTicks", 0) / TICKS, "paused": body.get("IsPaused"),
                                      "method": body.get("PlayMethod"), "event": body.get("EventName"),
-                                     "audio": body.get("AudioStreamIndex"), "subtitle": body.get("SubtitleStreamIndex")})
+                                     "audio": body.get("AudioStreamIndex"), "subtitle": body.get("SubtitleStreamIndex"),
+                                     "source": body.get("MediaSourceId")})
             if kind == "stop":
                 data = STATE["user"].get(body.get("ItemId"))
                 item = STATE["items"].get(body.get("ItemId"))
@@ -673,10 +694,13 @@ class Handler(BaseHTTPRequestHandler):
         may_convert = body.get("EnableTranscoding", True) is not False and q.get("enableTranscoding", ["true"])[0] != "false"
         STATE["playbackInfo"].append({"item": item_id, "enableTranscoding": may_convert,
                                       "transcodingProfiles": len((body.get("DeviceProfile") or {}).get("TranscodingProfiles") or []),
-                                      "subtitle": body.get("SubtitleStreamIndex")})
+                                      "subtitle": body.get("SubtitleStreamIndex"), "source": body.get("MediaSourceId")})
         sources = []
         cap = body.get("MaxStreamingBitrate") or int(q.get("maxStreamingBitrate", ["0"])[0] or 0)
+        wanted = body.get("MediaSourceId") or q.get("mediaSourceId", [""])[0]
         for ms in item["MediaSources"]:
+            if wanted and ms["Id"] != wanted:
+                continue
             out = json.loads(json.dumps(ms))
             direct = body.get("EnableDirectPlay", True) and not (cap and cap < ms["Bitrate"])
             if not may_convert:
@@ -694,19 +718,22 @@ class Handler(BaseHTTPRequestHandler):
             sources.append(out)
         return {"MediaSources": sources, "PlaySessionId": session}
 
-    def download(self, item_id, q):
+    def download(self, item_id, q, source=""):
         with LOCK:
             if not self.authed(q):
                 return self.send(401, "")
             item = STATE["items"].get(item_id)
             if not item or "MediaSources" not in item:
                 return self.send(404, "")
-            data = payload(item_id)
-            version = STATE["versions"].get(item_id, 0)
+            source = source or item_id
+            if not any(ms["Id"] == source for ms in item["MediaSources"]):
+                return self.send(404, "")
+            data = payload(source)
+            version = STATE["versions"].get(source, 0)
             drop, STATE["dropAfter"] = STATE["dropAfter"], 0
             throttle = STATE["throttle"]
             rng = self.headers.get("Range")
-            STATE["downloads"].append({"item": item_id, "range": rng})
+            STATE["downloads"].append({"item": item_id, "source": source, "range": rng})
         # Like Jellyfin: Range is honoured, If-Range is ignored, and there is
         # no ETag, only Last-Modified.
         modified = "Thu, %02d Jul 2026 16:23:58 GMT" % (23 + version)

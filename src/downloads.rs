@@ -130,6 +130,7 @@ impl Entry {
     pub fn to_json(&self) -> Value {
         json!({
             "id": self.id,
+            "sourceId": if self.source_id.is_empty() { &self.id } else { &self.source_id },
             "card": self.card,
             "state": self.state,
             "size": self.size,
@@ -327,6 +328,18 @@ pub fn clean_name(raw: &str) -> String {
     let trimmed: String = out.trim().trim_start_matches('.').trim().chars().take(120).collect();
     let trimmed = trimmed.trim_end_matches(['.', ' ']).to_string();
     if trimmed.is_empty() { "Untitled".into() } else { trimmed }
+}
+
+/// Where a version's original file comes from. `/Items/{id}/Download`
+/// only ever sends the item's main file, so another version (a second file
+/// Jellyfin grouped with it) comes from its static stream: the same bytes,
+/// with Range and Last-Modified, and nothing converted.
+fn download_path(id: &str, source: &str) -> String {
+    if source == id || !valid_id(source) {
+        format!("/Items/{id}/Download")
+    } else {
+        format!("/Videos/{id}/stream?static=true&mediaSourceId={source}")
+    }
 }
 
 fn extension(disposition: Option<&str>, container: &str) -> String {
@@ -1233,7 +1246,7 @@ async fn transfer(app: &Arc<App>, entry: &Entry) -> Outcome {
     if have > 0 {
         headers.push(("Range", format!("bytes={have}-")));
     }
-    let response = match app.jellyfin.raw(&format!("/Items/{}/Download", entry.id), &headers).await {
+    let response = match app.jellyfin.raw(&download_path(&entry.id, &entry.source_id), &headers).await {
         Ok(r) => r,
         Err(err) => {
             return match err.code {
@@ -1534,6 +1547,17 @@ fn tidy_metadata(meta: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn another_version_downloads_from_its_static_stream() {
+        let id = "a0000000000000000000000000000069";
+        let other = "a0000000000000000000000000000079";
+        assert_eq!(download_path(id, id), format!("/Items/{id}/Download"));
+        assert_eq!(download_path(id, ""), format!("/Items/{id}/Download"));
+        assert_eq!(download_path(id, other), format!("/Videos/{id}/stream?static=true&mediaSourceId={other}"));
+        // A downloads.json edited by hand cannot put anything into the URL.
+        assert_eq!(download_path(id, "x&ApiKey=1"), format!("/Items/{id}/Download"));
+    }
 
     #[test]
     fn names_are_safe_on_disk() {

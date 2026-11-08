@@ -22,6 +22,8 @@ CASABLANCA = "a0000000000000000000000000000066"
 DUNE = "a0000000000000000000000000000067"
 EDGE = "a0000000000000000000000000000068"
 HUGE = "a000000000000000000000000000006a"
+FARGO = "a0000000000000000000000000000069"
+FARGO_4K = "a0000000000000000000000000000073"
 SEASON1 = "a00000000000000000000000000000d2"
 
 
@@ -307,6 +309,26 @@ def main():
         b.call("downloads.remove", {"id": EDGE})
         assert os.listdir(os.path.dirname(edge["path"])) == ["poster I made.png"], os.listdir(os.path.dirname(edge["path"]))
         print("ok: deleting a film keeps files added to its folder")
+
+        # Another version of a film: its own file, from the static stream
+        # (Jellyfin's Download sends only the main file), resumed after a drop.
+        b.refused("downloads.add", {"id": FARGO, "sourceId": "../x"}, "not a valid")
+        b.refused("downloads.add", {"id": FARGO, "sourceId": BLADE}, "no file to download")
+        control(port, dropAfter=1_000_000)
+        added = b.call("downloads.add", {"id": FARGO, "sourceId": FARGO_4K})
+        assert added["sourceId"] == FARGO_4K, added
+        uhd = wait_state(b, FARGO, "done", 60)
+        assert uhd["path"].endswith(".mkv"), uhd["path"]
+        assert open(uhd["path"], "rb").read() == expected(FARGO_4K), "the second version's bytes"
+        fetched = [d for d in state(port)["downloads"] if d["item"] == FARGO][-2:]
+        assert [d["source"] for d in fetched] == [FARGO_4K, FARGO_4K] and fetched[1]["range"], fetched
+        # Already downloaded: asking again (for any version) changes nothing.
+        assert b.call("downloads.add", {"id": FARGO})["sourceId"] == FARGO_4K
+        played = b.call("play.prepare", {"id": FARGO})
+        assert played["local"] is True and played["sourceId"] == FARGO_4K, played
+        assert [a["codec"] for a in played["audio"]] == ["truehd", "ac3"], played["audio"]
+        b.call("downloads.remove", {"id": FARGO})
+        print("ok: another version of a film downloads its own file")
 
         print("downloads e2e: all passed")
     finally:

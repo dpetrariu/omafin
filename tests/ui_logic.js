@@ -111,6 +111,14 @@ test("streams and transcodes are said in words", () => {
   assert.strictEqual(Format.videoTag({ width: 3840, height: 1600, codec: "hevc", range: "HDR10" }), "4K HEVC HDR10")
   assert.strictEqual(Format.videoTag({ width: 1920, height: 800, codec: "h264", range: "SDR" }), "1080p H264")
   assert.strictEqual(Format.videoTag({ width: 3840, height: 2160, codec: "hevc", range: "DOVIWithEL" }), "4K HEVC Dolby Vision")
+  const uhd = { name: "(1955) - 2160p HEVC HDR", size: 11283751307, container: "mkv",
+    streams: [{ type: "Video", width: 3840, height: 2160, codec: "hevc", range: "HDR10" }, { type: "Audio" }] }
+  assert.strictEqual(Format.versionLabel(uhd, 0), "2160p HEVC HDR")
+  assert.strictEqual(Format.versionLabel({ name: "(1955)- 4k.dts" }, 1), "4k.dts")
+  assert.strictEqual(Format.versionLabel({ name: "Director's Cut" }, 1), "Director's Cut")
+  assert.strictEqual(Format.versionLabel({ name: "", streams: uhd.streams }, 0), "4K HEVC HDR10")
+  assert.strictEqual(Format.versionLabel({ name: "(1955)" }, 2), "Version 3")
+  assert.strictEqual(Format.versionDetail(uhd), "4K HEVC HDR10  ·  10.5 GB  ·  MKV")
   assert.strictEqual(Format.reasonsLabel(["ContainerBitrateExceedsLimit", "VideoBitrateNotSupported", "AudioCodecNotSupported"]), "the quality limit, the audio format")
   assert.strictEqual(Format.streamLabel({ label: "English - SRT", isExternal: true }), "English - SRT · external")
   assert.strictEqual(Format.bitrate(8000000), "8.0 Mbps")

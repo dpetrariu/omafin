@@ -20,6 +20,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 MOVIES = "a0000000000000000000000000000001"
 ARRIVAL = "a0000000000000000000000000000064"   # gid(100): subtitles, chapters, trickplay, in progress
 BLADE = "a0000000000000000000000000000065"
+FARGO = "a0000000000000000000000000000069"     # gid(105): two versions
+FARGO_4K = "a0000000000000000000000000000073"  # gid(115): its second file
 HOMELAND = "a00000000000000000000000000000c8"  # gid(200)
 S1E2 = "a00000000000000000000000000000d4"      # gid(212): next up, has an intro
 
@@ -288,6 +290,23 @@ def main():
         status, headers, body = fetch(base, direct["url"], {"Range": "bytes=0-99"})
         assert status == 206 and len(body) == (100 if media else 64), (status, len(body))
         print("ok: direct play")
+
+        # Versions: every file Jellyfin grouped as one film is offered, with
+        # its own tracks, and the one asked for is the one that plays.
+        fargo = b.call("item.get", {"id": FARGO})
+        assert [s["id"] for s in fargo["sources"]] == [FARGO, FARGO_4K], fargo["sources"]
+        assert [s["name"] for s in fargo["sources"]] == ["(1996) - 1080p", "(1996) - 2160p HDR"]
+        assert [x["codec"] for x in fargo["sources"][1]["streams"] if x["type"] == "Audio"] == ["truehd", "ac3"]
+        first = b.call("play.prepare", {"id": FARGO})
+        assert first["sourceId"] == FARGO and "mediaSourceId=" + FARGO in first["url"], first
+        uhd = b.call("play.prepare", {"id": FARGO, "mediaSourceId": FARGO_4K, "audioIndex": 2})
+        assert uhd["sourceId"] == FARGO_4K and uhd["method"] == "DirectPlay", uhd
+        assert uhd["url"].startswith("/jf/Videos/" + FARGO + "/stream?static=true") and "mediaSourceId=" + FARGO_4K in uhd["url"]
+        assert [a["codec"] for a in uhd["audio"]] == ["truehd", "ac3"] and uhd["audioIndex"] == 2 and uhd["video"]["height"] == 2160, uhd
+        assert state(port)["playbackInfo"][-1]["source"] == FARGO_4K
+        b.refused("play.prepare", {"id": FARGO, "mediaSourceId": "../Users"}, "")
+        b.refused("play.prepare", {"id": FARGO, "mediaSourceId": BLADE}, "no playable file")
+        print("ok: versions of a film")
 
         # By default nothing asks the server to convert: picture subtitles are
         # left to mpv, quality limits are ignored, a forced convert is refused.

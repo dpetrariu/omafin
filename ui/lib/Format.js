@@ -197,6 +197,28 @@ function videoTag(video) {
   return parts.filter(function(p) { return p !== "" }).join(" ")
 }
 
+// A version of a film (one of the files Jellyfin grouped as one title),
+// named as Jellyfin names it after its file: "(1955) - 2160p HEVC HDR"
+// becomes "2160p HEVC HDR". Without a usable name, its picture says it.
+function versionLabel(source, index) {
+  if (!source) return ""
+  var name = String(source.name || "").trim()
+    .replace(/^\(\d{4}\)\s*/, "")
+    .replace(/^[-–—_.\s]+/, "")
+    .trim()
+  if (name !== "") return name
+  var video = (source.streams || []).filter(function(s) { return s.type === "Video" })[0]
+  return videoTag(video) || ("Version " + ((index || 0) + 1))
+}
+
+// "4K HEVC Dolby Vision · 49.9 GB · MKV": what tells two versions apart.
+function versionDetail(source) {
+  if (!source) return ""
+  var video = (source.streams || []).filter(function(s) { return s.type === "Video" })[0]
+  return [videoTag(video), source.size ? bytes(source.size) : "", source.container ? String(source.container).toUpperCase() : ""]
+    .filter(function(s) { return s !== "" }).join("  ·  ")
+}
+
 var METHODS = { DirectPlay: "Direct play", DirectStream: "Direct stream", Transcode: "Transcoding" }
 function methodLabel(method) {
   return METHODS[method] || String(method || "")

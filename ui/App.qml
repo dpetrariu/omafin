@@ -381,9 +381,16 @@ Item {
   // dropped if something newer was asked for, or the window was closed.
   property int playRequest: 0
 
+  // What the page on screen picked for this title (its version and tracks),
+  // so a key, a menu or a button plays or downloads the same thing.
+  function picksFor(item) {
+    var v = view()
+    return item && v && typeof v.picksFor === "function" ? v.picksFor(item) : {}
+  }
+
   function playItem(item, options) {
     if (!item) return
-    options = options || {}
+    options = Object.assign({}, picksFor(item), options || {})
     var mine = ++playRequest
     resolvePlayable(item, function(target) {
       if (mine !== root.playRequest || !root.opened) return
@@ -401,12 +408,13 @@ Item {
       toast.show("mpv is not installed (sudo pacman -S mpv)", { tone: "error" })
       return
     }
+    var o = Object.assign({}, picksFor(item), options || {})
     resolvePlayable(item, function(target) {
       var params = { id: target.id }
-      var o = options || {}
       params.start = o.restart ? 0 : target.user && !target.user.played && target.user.position ? target.user.position : 0
       if (o.audioIndex !== undefined && o.audioIndex !== null) params.audioIndex = o.audioIndex
       if (o.subtitleIndex !== undefined && o.subtitleIndex !== null) params.subtitleIndex = o.subtitleIndex
+      if (o.mediaSourceId && target.id === item.id) params.mediaSourceId = o.mediaSourceId
       if (o.pip === true) params.pip = true
       toast.show(o.pip === true ? "Popping out " + Format.cardTitle(target) + "…" : "Opening " + Format.cardTitle(target) + " in mpv…")
       root.service.call("play.mpv", params, function(r, e) {
@@ -476,7 +484,10 @@ Item {
   // ---------------------------------------------------------------- downloads
 
   function startDownload(item) {
-    service.call("downloads.add", { id: item.id }, function(r, e) {
+    var params = { id: item.id }
+    var picked = picksFor(item).mediaSourceId
+    if (picked) params.sourceId = picked
+    service.call("downloads.add", params, function(r, e) {
       if (e) { toast.show(e.message, { tone: "error" }); return }
       if (r.state === "done") toast.show(Format.cardTitle(item) + " is already downloaded")
       else toast.show("Downloading " + Format.cardTitle(item) + (item.type === "Episode" ? " " + Format.episodeCode(item) : "") + " to " + root.service.downloadsRoot)
